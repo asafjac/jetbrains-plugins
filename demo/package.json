@@ -1,0 +1,7 @@
+{
+  "name": "registry-navigator-demo",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Fixture project for the Registry Navigator plugin. No dependencies, nothing to install."
+}

@@ -1,0 +1,7 @@
+* text=auto eol=lf
+
+# The wrapper jar is binary; the launcher scripts must keep their platform's endings -
+# a CRLF gradlew fails on any POSIX shell with a bad-interpreter error.
+*.jar binary
+gradlew text eol=lf
+gradlew.bat text eol=crlf

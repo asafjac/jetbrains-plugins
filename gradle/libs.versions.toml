@@ -1,0 +1,15 @@
+# Single source of truth for versions across every plugin in the monorepo.
+# buildSrc reads this same file (see buildSrc/settings.gradle.kts), so the conventions
+# plugin and the plugins it configures can never drift apart.
+
+[versions]
+# Must be >= the Kotlin stdlib the target IDE bundles: the platform supplies the stdlib
+# (kotlin.stdlib.default.dependency=false) and an older compiler cannot read its metadata.
+kotlin = "2.4.10"
+intellijPlatform = "2.18.1"
+
+[libraries]
+# Gradle Plugin Portal marker artifacts, so buildSrc can put these plugins on the
+# classpath of precompiled script plugins.
+kotlin-gradle-plugin = { module = "org.jetbrains.kotlin:kotlin-gradle-plugin", version.ref = "kotlin" }
+intellijPlatform-gradle-plugin = { module = "org.jetbrains.intellij.platform:org.jetbrains.intellij.platform.gradle.plugin", version.ref = "intellijPlatform" }

@@ -1,0 +1,37 @@
+<idea-plugin>
+    <id>com.asafjac.jbplugins.registry-navigator</id>
+    <name>Registry Navigator</name>
+    <vendor email="asafjac@users.noreply.github.com" url="https://github.com/asafjac/jetbrains-plugins">asafjac</vendor>
+
+    <description><![CDATA[
+        Go to Declaration on a component registry slot jumps to the components,
+        not the getter.
+        <p>
+        Where a consumer writes <code>FooRegistry.Bar</code> and a class hierarchy decides
+        which implementation that becomes, Ctrl+B normally lands on the base getter and stops.
+        This adds every overriding implementation's component as a target.
+        </p>
+        <p>Requires the JavaScript plugin (WebStorm, or IntelliJ IDEA Ultimate).</p>
+    ]]></description>
+
+    <depends>com.intellij.modules.platform</depends>
+    <depends>JavaScript</depends>
+
+    <extensions defaultExtensionNs="com.intellij">
+        <gotoDeclarationHandler
+            implementation="com.asafjac.jbplugins.registrynav.GotoRegistryImplementation"/>
+
+        <psi.referenceContributor
+            language="JavaScript"
+            implementation="com.asafjac.jbplugins.registrynav.RegistrySegmentReferenceContributor"/>
+    </extensions>
+
+    <actions>
+        <action id="RegistryNavigator.Diagnose"
+                class="com.asafjac.jbplugins.registrynav.DiagnoseSlotAction"
+                text="Registry Navigator: Diagnose at Caret"
+                description="Report what the registry slot resolver sees at the caret">
+            <add-to-group group-id="ToolsMenu" anchor="last"/>
+        </action>
+    </actions>
+</idea-plugin>

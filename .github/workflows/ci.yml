@@ -1,0 +1,34 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # No local.properties on CI, so the build downloads the platform named by
+      # platformType/platformVersion in gradle.properties - the same version pluginSinceBuild
+      # claims support for, which makes CI the honest check that local builds are not.
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 21
+
+      - uses: gradle/actions/setup-gradle@v4
+
+      - name: Build
+        run: ./gradlew buildPlugin verifyPluginProjectConfiguration --stacktrace
+
+      # Downloadable from the run's summary page. Useful for trying a branch without cutting
+      # a release; retained briefly since releases are the durable artifact.
+      - uses: actions/upload-artifact@v4
+        with:
+          name: registry-navigator
+          path: plugins/*/build/distributions/*.zip
+          retention-days: 14
