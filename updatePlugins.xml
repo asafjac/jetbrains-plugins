@@ -10,8 +10,8 @@
 -->
 <plugins>
   <plugin id="com.asafjac.jbplugins.registry-navigator"
-          url="https://github.com/asafjac/jetbrains-plugins/releases/download/v0.6.0/registry-navigator-0.6.0.zip"
-          version="0.6.0">
+          url="https://github.com/asafjac/jetbrains-plugins/releases/download/v0.7.0/registry-navigator-0.7.0.zip"
+          version="0.7.0">
     <name>Registry Navigator</name>
     <idea-version since-build="252"/>
   </plugin>
