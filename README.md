@@ -43,35 +43,43 @@ Or run a throwaway sandbox IDE with the plugin loaded and nothing installed:
 
 ## Registry Navigator
 
-**Problem.** You write `<FooRegistry.Bar />`. A class hierarchy picks the implementation.
+**Problem.** You write `<FooRegistry.qux.Baz />`. A class hierarchy decides which
+implementation that becomes, so the call site names the slot, never the component.
 
-- `Ctrl+B` → lands on the base *getter*. Not the component. Dead end.
-- Find Usages on `AcmeBar` → one hit, inside its own registry. Dead end.
+### Before: four hops
 
-**Before the plugin**, reaching Acme's component from a call site takes four hops:
+`Ctrl+B` on `Baz` lands on the **type**, not the component. From there you go hunting: the
+base getter, Go to Implementations, the override, and finally the component. Four files
+open by the end.
+
+![Navigating without the plugin](docs/without-plugin.gif)
 
 | # | Action | Lands on |
 |---|---|---|
-| 1 | `Ctrl+B` on `Baz` in `<FooRegistry.qux.Baz />` | `Baz` in the `QuxSlot` **type**. A type, not a component. |
-| 2 | `Ctrl+B` again / go to `BaseFooRegistry.qux` | the base getter, returning the neutral `Baz` |
-| 3 | `Ctrl+Alt+B` (Go to Implementations) on `qux` | a list of implementation getters; pick `AcmeFooRegistry` |
+| 1 | `Ctrl+B` on `Baz` in `<FooRegistry.qux.Baz />` | `Baz` in the `QuxSlot` **type** |
+| 2 | find `get qux()` in `BaseFooRegistry` | the base getter, returning the neutral `Baz` |
+| 3 | `Ctrl+Alt+B` (Go to Implementations) on `qux` | `AcmeFooRegistry.qux` |
 | 4 | `Ctrl+B` on `AcmeBaz` in the returned object | finally, the component |
 
-Four hops, and step 3 is the one nobody remembers exists. The flat slot `FooRegistry.Bar`
-is the same count: getter, implementations list, implementation getter, component.
+Step 3 is the one nobody remembers exists.
 
-**With the plugin: one `Ctrl+Click`.** A popup of every implementation's actual component, each row
-labelled with the registry it came from:
+### After: one click
 
-```
-AcmeBar    AcmeFooRegistry - AcmeBar.tsx
-ZedBar     ZedFooRegistry - ZedBar.tsx
-Bar        BaseFooRegistry - Bar.tsx
-```
+Every implementation at once, each row labelled with the registry it came from. Clicking a
+different segment answers a different question.
 
-Implementations that *don't* override the slot don't appear - they inherit the base.
+![Navigating with the plugin](docs/with-plugin.gif)
 
-Stuck? **Tools → Registry Navigator: Diagnose at Caret** prints what the resolver saw.
+| Click on | You get |
+|---|---|
+| `FooRegistry` | the registry classes: `BaseFooRegistry`, `ZedFooRegistry`, `AcmeFooRegistry` |
+| `qux` | the slot getters: `BaseFooRegistry.qux`, `AcmeFooRegistry.qux` |
+| `Baz` | the components: `Baz`, `AcmeBaz` |
+
+Implementations that don't override the slot don't appear - they inherit the base. Both
+clips are also in `docs/` as MP4.
+
+Stuck? **Tools > Registry Navigator: Diagnose at Caret** prints what the resolver saw.
 
 Works on JSX tags (`<FooRegistry.qux.Baz />`) and plain expressions alike.
 
