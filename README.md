@@ -16,7 +16,7 @@ Requires WebStorm or IDEA Ultimate.
 
 ### Demo Driver
 
-Records IDE demos from a script, so a demo is re-recorded on demand instead of performed by hand.
+Records IDE demos from a script, so a demo is re-recorded on demand instead of performed by hand. Press Record in the **Demo Driver** tool window, use the IDE normally, and it writes the script for you; ffmpeg is downloaded on first use if you do not have it.
 
 ![Shot list: record, tidy, replay](docs/demo-driver.gif)
 

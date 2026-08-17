@@ -12,13 +12,23 @@
         there, so takes look human while the targets stay exact across font, theme, zoom and
         window changes.
         </p>
-        <p>Needs ffmpeg on PATH for capture. Dev tooling; nothing runs unless you invoke it.</p>
+        <p>
+        Record mode watches the IDE and writes the tape for you, so a walkthrough is performed
+        once and replayed thereafter. ffmpeg does the capture; if none is installed the plugin
+        offers to download one.
+        </p>
+        <p>Dev tooling: nothing runs unless you invoke it.</p>
     ]]></description>
 
     <depends>com.intellij.modules.platform</depends>
 
     <extensions defaultExtensionNs="com.intellij">
         <notificationGroup id="Demo Driver" displayType="BALLOON"/>
+        <toolWindow id="Demo Driver"
+                    anchor="bottom"
+                    secondary="true"
+                    icon="AllIcons.Debugger.Db_set_breakpoint"
+                    factoryClass="com.asafjac.jbplugins.demodriver.DemoDriverToolWindowFactory"/>
     </extensions>
 
     <actions>
