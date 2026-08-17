@@ -12,7 +12,6 @@ import com.intellij.openapi.wm.WindowManager
 import java.awt.GraphicsEnvironment
 import java.awt.Point
 import java.awt.Rectangle
-import javax.swing.JList
 import kotlin.math.abs
 
 /**
@@ -95,61 +94,19 @@ class Targets(private val project: Project) {
      * implementation.
      */
     fun popupRow(label: String): Point = onEdt {
-        val list = findVisibleList() ?: error("no popup list is showing")
+        val list = PopupRows.visibleList() ?: error("no popup list is showing")
         val model = list.model
         val index = (0 until model.size).firstOrNull { i ->
-            renderedText(list, i).contains(label, ignoreCase = true)
+            PopupRows.renderedText(list, i).contains(label, ignoreCase = true)
         } ?: error(
             "no popup row matching '$label'. Showing: " +
-                (0 until model.size).joinToString(", ") { "'" + renderedText(list, it) + "'" }
+                (0 until model.size).joinToString(", ") { "'" + PopupRows.renderedText(list, it) + "'" }
         )
 
         list.ensureIndexIsVisible(index)
         val cell = list.getCellBounds(index, index) ?: error("popup row $index has no bounds")
         val origin = list.locationOnScreen
         Point(origin.x + cell.width / 3, origin.y + cell.y + cell.height / 2)
-    }
-
-    /**
-     * The rendered label of a row, taken from the cell renderer rather than `toString()`.
-     *
-     * The elements behind these rows are PSI, whose `toString()` is a debug description and not
-     * what the user sees. Asking the renderer is what makes matching on visible text work.
-     */
-    private fun renderedText(list: JList<*>, index: Int): String {
-        val value = list.model.getElementAt(index)
-        val component = runCatching {
-            @Suppress("UNCHECKED_CAST")
-            (list as JList<Any?>).cellRenderer
-                .getListCellRendererComponent(list, value, index, false, false)
-        }.getOrNull() ?: return value?.toString().orEmpty()
-        return collectText(component).ifBlank { value?.toString().orEmpty() }
-    }
-
-    private fun collectText(component: java.awt.Component): String = buildString {
-        when (component) {
-            is javax.swing.JLabel -> append(component.text.orEmpty())
-            is javax.swing.text.JTextComponent -> append(component.text.orEmpty())
-        }
-        if (component is java.awt.Container) {
-            component.components.forEach { append(' ').append(collectText(it)) }
-        }
-    }
-
-    /** Depth-first search for a showing JList in any visible window. */
-    private fun findVisibleList(): JList<*>? {
-        for (window in java.awt.Window.getWindows()) {
-            if (!window.isShowing) continue
-            descendants(window).filterIsInstance<JList<*>>()
-                .firstOrNull { it.isShowing && it.model.size > 0 }
-                ?.let { return it }
-        }
-        return null
-    }
-
-    private fun descendants(root: java.awt.Component): Sequence<java.awt.Component> = sequence {
-        yield(root)
-        if (root is java.awt.Container) root.components.forEach { yieldAll(descendants(it)) }
     }
 
     /**

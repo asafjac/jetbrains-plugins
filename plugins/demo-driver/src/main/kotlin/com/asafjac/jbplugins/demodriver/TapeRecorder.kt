@@ -14,7 +14,14 @@ import com.intellij.openapi.fileEditor.FileEditorManagerEvent
 import com.intellij.openapi.fileEditor.FileEditorManagerListener
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.util.Disposer
+import java.awt.AWTEvent
+import java.awt.Component
+import java.awt.Toolkit
+import java.awt.event.AWTEventListener
+import java.awt.event.KeyEvent
 import java.awt.event.MouseEvent
+import javax.swing.JList
+import javax.swing.SwingUtilities
 
 /**
  * Watches the IDE and writes down what you did, as tape.
@@ -33,6 +40,14 @@ class TapeRecorder(private val project: Project) {
     private var lastEventAt = 0L
     private var lastFile: String? = null
     private var disposable: Disposable? = null
+    private var awtListener: AWTEventListener? = null
+    /**
+     * Steps arriving before this are consequences of a navigation rather than intent.
+     *
+     * Picking a popup row opens a file and moves a caret, and recording those would make the
+     * replay click at the destination it had just been sent to.
+     */
+    private var suppressUntil = 0L
 
     val isRecording: Boolean get() = disposable != null
 
@@ -69,11 +84,14 @@ class TapeRecorder(private val project: Project) {
                     val file = event.newFile ?: return
                     val relative = relative(file.path)
                     if (relative == lastFile) return
+                    if (suppressed()) { lastFile = relative; return }
                     lastFile = relative
                     gap()
                     lines += "Open $relative"
                 }
             })
+
+        installPopupWatcher()
 
         // Application-level, since actions are not project-scoped. Recording the id rather than
         // the keystroke keeps the tape readable and keymap-independent.
@@ -89,12 +107,78 @@ class TapeRecorder(private val project: Project) {
                     if (id in IGNORED_ACTIONS) return
                     gap()
                     lines += "Action $id"
+                    // An action that navigates produces its own Open and Caret events.
+                    suppress()
                 }
             })
     }
 
+    /**
+     * Watches every mouse press and key press in the IDE, to catch a popup row being chosen.
+     *
+     * There is no IDE event for "the user picked row N of a Choose Declaration popup", so this
+     * goes a level lower: on a click, find the list under the pointer and read that row's rendered
+     * label; on Enter, read whatever row the popup had selected. Both paths matter, because both
+     * are equally normal ways to take a popup.
+     */
+    private fun installPopupWatcher() {
+        val listener = AWTEventListener { event ->
+            // Swallow failures: this runs for every mouse and key event in the IDE, and a
+            // recorder that could throw here would break the IDE it is watching.
+            runCatching {
+                when {
+                    event is MouseEvent && event.id == MouseEvent.MOUSE_PRESSED -> {
+                        val list = listUnder(event) ?: return@runCatching
+                        val point = SwingUtilities.convertPoint(event.component, event.point, list)
+                        recordPopup(list, list.locationToIndex(point))
+                    }
+                    event is KeyEvent && event.id == KeyEvent.KEY_PRESSED &&
+                        event.keyCode == KeyEvent.VK_ENTER -> {
+                        val list = PopupRows.visibleList() ?: return@runCatching
+                        recordPopup(list, list.selectedIndex)
+                    }
+                }
+            }
+        }
+        Toolkit.getDefaultToolkit().addAWTEventListener(
+            listener, AWTEvent.MOUSE_EVENT_MASK or AWTEvent.KEY_EVENT_MASK)
+        awtListener = listener
+    }
+
+    /** The popup list a click landed in, or null. */
+    private fun listUnder(event: MouseEvent): JList<*>? {
+        val component: Component = event.component ?: return null
+        val list = component as? JList<*>
+            ?: SwingUtilities.getAncestorOfClass(JList::class.java, component) as? JList<*>
+            ?: return null
+        if (!PopupRows.isPopupList(list)) return null
+        // A click on the popup's border or header is not a row.
+        val point = SwingUtilities.convertPoint(event.component, event.point, list)
+        return if (list.locationToIndex(point) >= 0) list else null
+    }
+
+    private fun recordPopup(list: JList<*>, index: Int) {
+        if (index < 0) return
+        val label = PopupRows.renderedText(list, index)
+        if (label.isBlank()) return
+        // A row reads "AcmeBaz (AcmeFooRegistry - AcmeBaz.ts)". The leading name is the stable
+        // part and is what the runner matches on, so the tape survives a file being renamed.
+        val short = label.substringBefore(" (").trim().ifBlank { label }
+        gap()
+        lines += "Popup \"$short\""
+        suppress()
+    }
+
+    private fun suppress() {
+        suppressUntil = System.currentTimeMillis() + SUPPRESS_MS
+    }
+
+    private fun suppressed(): Boolean = System.currentTimeMillis() < suppressUntil
+
     /** Stops recording and returns the tape text. */
     fun stop(settings: TapeSettings = TapeSettings()): String {
+        awtListener?.let { Toolkit.getDefaultToolkit().removeAWTEventListener(it) }
+        awtListener = null
         disposable?.let { Disposer.dispose(it) }
         disposable = null
 
@@ -102,8 +186,6 @@ class TapeRecorder(private val project: Project) {
             "# Recorded by Demo Driver. Tidy the Sleep durations, then replay.",
             "#",
             "# Targets are text, not pixels, so this keeps working after the file is edited.",
-            "# Popup picks are not captured; add them by hand where a Choose Declaration",
-            "# popup appeared, for example:  Popup \"AcmeBaz\"",
             "",
         )
         val body = if (lines.isEmpty()) listOf("# Nothing was recorded.") else lines
@@ -111,6 +193,7 @@ class TapeRecorder(private val project: Project) {
     }
 
     private fun recordCaret(event: CaretEvent) {
+        if (suppressed()) return
         val editor = event.editor
         if (editor.project != null && editor.project != project) return
         val document = editor.document
@@ -175,6 +258,8 @@ class TapeRecorder(private val project: Project) {
         const val MIN_GAP_MS = 250L
         /** A pause longer than this is someone thinking, not part of the demo. */
         const val MAX_GAP_MS = 4000L
+        /** How long after a navigation its resulting Open and Caret events are ignored. */
+        const val SUPPRESS_MS = 1200L
 
         /**
          * Actions that are part of driving the recorder, or noise.
