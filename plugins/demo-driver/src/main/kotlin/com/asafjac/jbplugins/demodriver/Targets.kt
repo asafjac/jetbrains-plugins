@@ -32,81 +32,166 @@ class Targets(private val project: Project) {
         return result!!.getOrThrow()
     }
 
-    fun openFile(relativePath: String) = onEdt {
-        val base = project.basePath ?: error("project has no base path")
-        val file = LocalFileSystem.getInstance().refreshAndFindFileByPath("$base/$relativePath")
-            ?: error("no such file: $relativePath")
+    /**
+     * Opens a file named relative to the project, or absolutely.
+     *
+     * A demo that steps into a library or a generated file lands outside the project root, where a
+     * relative path cannot reach; resolving both means those recordings replay instead of failing
+     * on a path that was never relative in the first place.
+     */
+    fun openFile(path: String) = onEdt {
+        val fs = LocalFileSystem.getInstance()
+        val candidates = buildList {
+            if (isAbsolute(path)) add(path) else project.basePath?.let { add("$it/$path") }
+            // Try the other reading too: a tape may have been written on a machine whose project
+            // root differed, and an absolute path from there is still worth attempting relatively.
+            if (!isAbsolute(path)) add(path) else project.basePath?.let { add("$it/${path.trimStart('/')}") }
+        }
+        val file = candidates.firstNotNullOfOrNull { fs.refreshAndFindFileByPath(it) }
+            ?: error("no such file: $path")
         FileEditorManager.getInstance(project).openFile(file, true)
         Unit
     }
+
+    private fun isAbsolute(path: String): Boolean =
+        path.startsWith("/") || (path.length > 2 && path[1] == ':')
 
     private fun editor(): Editor =
         FileEditorManager.getInstance(project).selectedTextEditor
             ?: error("no editor is open - the tape needs an Open step first")
 
     /**
-     * Places the caret on [anchor] and returns its position on screen.
+     * Places the caret on the [nth] occurrence of [anchor] and returns its position on screen.
      *
-     * [line] is 1-based to match what the gutter shows; 0 searches the whole file. Anchoring
-     * on text rather than a column means the tape survives reformatting and edits above it.
+     * [line] is a hint, not a requirement. It is searched first and the whole file second, so a tape
+     * keeps working when lines are inserted above its target; pinning the line meant every such edit
+     * broke the tape, which is exactly the fragility anchoring on text was supposed to avoid.
      */
-    fun caret(line: Int, anchor: String): Point = onEdt {
+    fun caret(line: Int, anchor: String, nth: Int = 1): Point = onEdt {
         val editor = editor()
-        val document = editor.document
-        val text = document.charsSequence.toString()
+        val offset = findAnchor(editor.document, line, anchor, nth)
+        // Aim at the middle of the anchor. A click on the leading edge is ambiguous between this
+        // token and the one before it, which matters for a dotted path like a.b.c where adjacent
+        // segments are exactly what we are trying to tell apart.
+        moveTo(editor, offset + anchor.length / 2)
+    }
 
-        val searchFrom: Int
-        val searchTo: Int
-        if (line <= 0) {
-            searchFrom = 0
-            searchTo = text.length
-        } else {
-            val index = line - 1
-            require(index < document.lineCount) { "line $line is past the end of the file" }
-            searchFrom = document.getLineStartOffset(index)
-            searchTo = document.getLineEndOffset(index)
-        }
+    /** Selects the [nth] occurrence of [anchor] and returns the middle of the selection. */
+    fun select(line: Int, anchor: String, nth: Int = 1): Point = onEdt {
+        val editor = editor()
+        val offset = findAnchor(editor.document, line, anchor, nth)
+        editor.selectionModel.setSelection(offset, offset + anchor.length)
+        moveTo(editor, offset + anchor.length / 2)
+    }
 
-        val found = text.indexOf(anchor, searchFrom)
-        require(found in searchFrom until searchTo) {
-            "anchor '$anchor' not found" + if (line > 0) " on line $line" else " in the file"
-        }
+    /** Scrolls [line] into view without disturbing the caret. */
+    fun scrollTo(line: Int) = onEdt {
+        val editor = editor()
+        val index = (line - 1).coerceIn(0, (editor.document.lineCount - 1).coerceAtLeast(0))
+        val position = com.intellij.openapi.editor.LogicalPosition(index, 0)
+        editor.scrollingModel.scrollTo(position, ScrollType.CENTER)
+        Unit
+    }
 
-        // Aim at the middle of the anchor. A click on the leading edge is ambiguous between
-        // this token and the one before it, which matters for a dotted path like a.b.c where
-        // adjacent segments are exactly what we are trying to tell apart.
-        val target = found + anchor.length / 2
-        editor.caretModel.moveToOffset(target)
+    private fun moveTo(editor: Editor, offset: Int): Point {
+        editor.caretModel.moveToOffset(offset)
         editor.scrollingModel.scrollToCaret(ScrollType.MAKE_VISIBLE)
-
-        val inEditor = editor.offsetToXY(target)
+        val inEditor = editor.offsetToXY(offset)
         val origin = editor.contentComponent.locationOnScreen
-        // offsetToXY gives the top-left of the character cell, so drop half a line to land on
-        // the glyph rather than on the boundary with the line above.
-        Point(origin.x + inEditor.x, origin.y + inEditor.y + editor.lineHeight / 2)
+        // offsetToXY gives the top-left of the character cell, so drop half a line to land on the
+        // glyph rather than on the boundary with the line above.
+        return Point(origin.x + inEditor.x, origin.y + inEditor.y + editor.lineHeight / 2)
     }
 
     /**
-     * Screen position of the popup row whose text contains [label].
+     * Offset of the [nth] occurrence of [anchor], preferring [line].
      *
-     * Matched on visible text rather than row index: a tape that says "row 2" breaks the moment
-     * the number of results changes, which is exactly what happens when someone adds another
-     * implementation.
+     * The occurrence matters: `FooRegistry.qux.Baz` can repeat a word on one line, and taking the
+     * first match sends the replay to a different segment than the one that was recorded.
      */
-    fun popupRow(label: String): Point = onEdt {
-        val list = PopupRows.visibleList() ?: error("no popup list is showing")
-        val model = list.model
-        val index = (0 until model.size).firstOrNull { i ->
-            PopupRows.renderedText(list, i).contains(label, ignoreCase = true)
-        } ?: error(
-            "no popup row matching '$label'. Showing: " +
-                (0 until model.size).joinToString(", ") { "'" + PopupRows.renderedText(list, it) + "'" }
-        )
+    private fun findAnchor(
+        document: com.intellij.openapi.editor.Document,
+        line: Int,
+        anchor: String,
+        nth: Int,
+    ): Int {
+        val text = document.charsSequence.toString()
 
-        list.ensureIndexIsVisible(index)
-        val cell = list.getCellBounds(index, index) ?: error("popup row $index has no bounds")
-        val origin = list.locationOnScreen
-        Point(origin.x + cell.width / 3, origin.y + cell.y + cell.height / 2)
+        fun nthIn(from: Int, to: Int): Int? {
+            var at = from
+            var seen = 0
+            while (at < to) {
+                val found = text.indexOf(anchor, at)
+                if (found < 0 || found >= to) return null
+                if (++seen == nth) return found
+                at = found + 1
+            }
+            return null
+        }
+
+        if (line in 1..document.lineCount) {
+            val index = line - 1
+            nthIn(document.getLineStartOffset(index), document.getLineEndOffset(index))
+                ?.let { return it }
+        }
+        nthIn(0, text.length)?.let { return it }
+        error(
+            "anchor '$anchor'" + (if (nth > 1) " occurrence $nth" else "") +
+                " not found" + if (line > 0) " on line $line or anywhere in the file" else " in the file")
+    }
+
+    /**
+     * Screen position of the popup row matching [label], waiting up to [timeoutMs] for one.
+     *
+     * Waiting rather than sleeping: a fixed pause has to be long enough for the slowest machine,
+     * which drags out every take on every other machine and still loses to an indexing pass.
+     */
+    fun popupRow(label: String, timeoutMs: Int = 5000): Point {
+        val deadline = System.currentTimeMillis() + timeoutMs
+        var lastSeen = ""
+        while (System.currentTimeMillis() < deadline) {
+            val found = onEdt {
+                val list = PopupRows.visibleList() ?: return@onEdt null
+                val index = PopupRows.indexOf(list, label)
+                if (index < 0) {
+                    lastSeen = PopupRows.allRows(list).joinToString(", ") { "'" + it + "'" }
+                    return@onEdt null
+                }
+                list.ensureIndexIsVisible(index)
+                val cell = list.getCellBounds(index, index) ?: return@onEdt null
+                val origin = list.locationOnScreen
+                Point(origin.x + cell.width / 3, origin.y + cell.y + cell.height / 2)
+            }
+            if (found != null) return found
+            Thread.sleep(80)
+        }
+        error(
+            if (lastSeen.isEmpty()) "no popup appeared within ${timeoutMs}ms"
+            else "no popup row matching '$label' within ${timeoutMs}ms. Showing: $lastSeen")
+    }
+
+    /** Waits for a popup to exist at all. */
+    fun waitForPopup(timeoutMs: Int): Boolean {
+        val deadline = System.currentTimeMillis() + timeoutMs
+        while (System.currentTimeMillis() < deadline) {
+            if (onEdt { PopupRows.visibleList() != null }) return true
+            Thread.sleep(80)
+        }
+        return false
+    }
+
+    /** Waits for an editor to be open and laid out. */
+    fun waitForEditor(timeoutMs: Int): Boolean {
+        val deadline = System.currentTimeMillis() + timeoutMs
+        while (System.currentTimeMillis() < deadline) {
+            val ready = onEdt {
+                val editor = FileEditorManager.getInstance(project).selectedTextEditor
+                editor != null && editor.contentComponent.isShowing
+            }
+            if (ready) return true
+            Thread.sleep(80)
+        }
+        return false
     }
 
     /**

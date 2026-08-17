@@ -53,6 +53,7 @@ class DemoDriverPanel(private val project: Project) : JPanel(BorderLayout()) {
     private val width = JSpinner(SpinnerNumberModel(940, 320, 3840, 20))
     private val framerate = JSpinner(SpinnerNumberModel(10, 1, 60, 1))
     private val cursor = JBCheckBox("Show pointer", true)
+    private val tooltips = JBCheckBox("Allow hover tooltips", true)
     private val snap = JBCheckBox("Snap region to IDE parts", false)
 
     private val runButton = JButton("Run and capture")
@@ -64,7 +65,9 @@ class DemoDriverPanel(private val project: Project) : JPanel(BorderLayout()) {
     private val stepDuration = JSpinner(SpinnerNumberModel(700, 0, 60000, 100))
     private val stepText = JTextField(12)
     private val stepLine = JSpinner(SpinnerNumberModel(0, 0, 100000, 1))
+    private val stepKind = JComboBox(STEP_KINDS)
     private val applyStep = JButton("Apply")
+    private val addStep = JButton("Add")
     private val upStep = JButton("Up")
     private val downStep = JButton("Down")
     private val dupStep = JButton("Duplicate")
@@ -123,6 +126,8 @@ class DemoDriverPanel(private val project: Project) : JPanel(BorderLayout()) {
      */
     private fun stepEditor(): JPanel {
         val fields = JPanel(FlowLayout(FlowLayout.LEFT, 4, 2)).apply {
+            add(JBLabel("Command"))
+            add(stepKind)
             add(JBLabel("Duration ms"))
             add(stepDuration)
             add(JBLabel("Line"))
@@ -132,7 +137,7 @@ class DemoDriverPanel(private val project: Project) : JPanel(BorderLayout()) {
             add(applyStep)
         }
         val buttons = JPanel(FlowLayout(FlowLayout.LEFT, 4, 2)).apply {
-            add(upStep); add(downStep); add(dupStep); add(delStep)
+            add(addStep); add(upStep); add(downStep); add(dupStep); add(delStep)
         }
         return JPanel(BorderLayout()).apply {
             border = BorderFactory.createTitledBorder("Selected step")
@@ -168,8 +173,13 @@ class DemoDriverPanel(private val project: Project) : JPanel(BorderLayout()) {
         c.gridx = 0; c.gridy = 5; c.gridwidth = 2
         grid.add(cursor, c)
         c.gridy = 6
-        grid.add(snap, c)
+        grid.add(tooltips.apply {
+            toolTipText = "Off stops the replay's own pointer raising quick documentation " +
+                "that was never in the recording"
+        }, c)
         c.gridy = 7
+        grid.add(snap, c)
+        c.gridy = 8
         grid.add(JBLabel("Each control writes one Set line into the tape.").apply {
             foreground = JBColor.GRAY
         }, c)
@@ -200,6 +210,8 @@ class DemoDriverPanel(private val project: Project) : JPanel(BorderLayout()) {
 
         stepList.addListSelectionListener { if (!loading) showSelectedStep() }
         applyStep.addActionListener { applySelectedStep() }
+        addStep.addActionListener { addNewStep() }
+        stepKind.addActionListener { if (!loading) showFieldsFor(stepKind.selectedItem as String) }
         upStep.addActionListener { moveSelected(-1) }
         downStep.addActionListener { moveSelected(1) }
         dupStep.addActionListener { editTape { text, line -> TapeWriter.duplicateStep(text, line) } }
@@ -214,7 +226,7 @@ class DemoDriverPanel(private val project: Project) : JPanel(BorderLayout()) {
         listOf(padding, width, framerate).forEach { spinner ->
             spinner.addChangeListener { if (!loading) save() }
         }
-        listOf(cursor, snap).forEach { box -> box.addActionListener { if (!loading) save() } }
+        listOf(cursor, tooltips, snap).forEach { box -> box.addActionListener { if (!loading) save() } }
         cropArg.addActionListener { if (!loading) save() }
         cropArg.addFocusListener(object : java.awt.event.FocusAdapter() {
             override fun focusLost(e: java.awt.event.FocusEvent) { if (!loading) save() }
@@ -313,6 +325,7 @@ class DemoDriverPanel(private val project: Project) : JPanel(BorderLayout()) {
         width.value = settings.width
         framerate.value = settings.framerate
         cursor.isSelected = settings.cursor
+        tooltips.isSelected = settings.tooltips
         snap.isSelected = settings.snap
         loading = false
 
@@ -323,49 +336,128 @@ class DemoDriverPanel(private val project: Project) : JPanel(BorderLayout()) {
 
     /** Mirrors the selected step into the step fields. */
     private fun showSelectedStep() {
-        val step = selectedStep()
+        val step = selectedStep() ?: return
         loading = true
-        stepDuration.isEnabled = step is Step.Sleep || step is Step.Glide
-        stepLine.isEnabled = step is Step.Caret
-        stepText.isEnabled = step is Step.Caret || step is Step.Popup ||
-            step is Step.Action || step is Step.Key || step is Step.Open
+        stepKind.selectedItem = kindOf(step)
         when (step) {
             is Step.Sleep -> stepDuration.value = step.ms
             is Step.Glide -> stepDuration.value = step.ms
+            is Step.WaitFor -> stepDuration.value = step.ms
             else -> Unit
         }
-        stepLine.value = (step as? Step.Caret)?.line ?: 0
+        stepLine.value = when (step) {
+            is Step.Caret -> step.line
+            is Step.Select -> step.line
+            is Step.Scroll -> step.line
+            else -> 0
+        }
         stepText.text = when (step) {
-            is Step.Caret -> step.anchor
+            is Step.Caret -> if (step.nth > 1) "${step.anchor} nth ${step.nth}" else step.anchor
+            is Step.Select -> if (step.nth > 1) "${step.anchor} nth ${step.nth}" else step.anchor
             is Step.Popup -> step.label
             is Step.Action -> step.id
             is Step.Key -> step.name
             is Step.Open -> step.path
+            is Step.WaitFor -> step.what
             else -> ""
         }
+        showFieldsFor(stepKind.selectedItem as String)
         loading = false
+    }
+
+    private fun kindOf(step: Step): String = when (step) {
+        is Step.Open -> "Open"
+        is Step.Caret -> "Caret"
+        is Step.Select -> "Select"
+        is Step.Scroll -> "Scroll"
+        is Step.Glide -> "Glide"
+        is Step.Click -> if (step.ctrl) "CtrlClick" else "Click"
+        is Step.Popup -> "Popup"
+        is Step.Action -> "Action"
+        is Step.Key -> "Key"
+        is Step.Sleep -> "Sleep"
+        is Step.WaitFor -> "WaitFor"
+    }
+
+    /** Enables only the fields a command actually carries, so nothing reads as editable in vain. */
+    private fun showFieldsFor(kind: String) {
+        stepDuration.isEnabled = kind in setOf("Sleep", "Glide", "WaitFor")
+        stepLine.isEnabled = kind in setOf("Caret", "Select", "Scroll")
+        stepText.isEnabled = kind in setOf("Caret", "Select", "Popup", "Action", "Key", "Open", "WaitFor")
+        stepText.toolTipText = TEXT_HINTS[kind]
+    }
+
+    /**
+     * Builds a step of the selected kind from the fields.
+     *
+     * Changing the command is a conversion rather than an edit, so a field the new kind does not use
+     * is simply dropped; keeping it would mean carrying invisible state the tape cannot express.
+     */
+    private fun stepFromFields(): Step {
+        val ms = stepDuration.value as Int
+        val line = stepLine.value as Int
+        val raw = stepText.text.trim()
+        // "Baz nth 2" in one field, so occurrence is editable without another spinner.
+        val nthAt = raw.indexOf(" nth ")
+        val text = if (nthAt >= 0) raw.substring(0, nthAt).trim() else raw
+        val nth = if (nthAt >= 0) raw.substring(nthAt + 5).trim().toIntOrNull() ?: 1 else 1
+
+        return when (stepKind.selectedItem as String) {
+            "Open" -> Step.Open(text)
+            "Caret" -> Step.Caret(line, text, nth)
+            "Select" -> Step.Select(line, text, nth)
+            "Scroll" -> Step.Scroll(line)
+            "Glide" -> Step.Glide(ms)
+            "Click" -> Step.Click(ctrl = false)
+            "CtrlClick" -> Step.Click(ctrl = true)
+            "Popup" -> Step.Popup(text)
+            "Action" -> Step.Action(text)
+            "Key" -> Step.Key(text.ifBlank { "Escape" })
+            "Sleep" -> Step.Sleep(ms)
+            "WaitFor" -> Step.WaitFor(text.ifBlank { "popup" }, ms)
+            else -> error("unknown command")
+        }
+    }
+
+    /** Inserts a new step after the selection, or at the end when nothing is selected. */
+    private fun addNewStep() {
+        val file = currentFile() ?: return
+        val document = com.intellij.openapi.fileEditor.FileDocumentManager.getInstance().getDocument(file)
+            ?: return
+        val step = runCatching { stepFromFields() }.getOrElse {
+            setStatus(it.message ?: "Cannot build that command", error = true)
+            return
+        }
+        val after = selectedSourceLine() ?: parsed?.stepLines?.lastOrNull() ?: document.lineCount
+        val lines = document.text.lines().toMutableList()
+        val at = after.coerceIn(0, lines.size)
+        lines.add(at, TapeWriter.renderStep(step))
+
+        WriteCommandAction.writeCommandAction(project)
+            .withName("Add Demo Tape Step")
+            .run<RuntimeException> {
+                document.setText(lines.joinToString("\n"))
+                PsiDocumentManager.getInstance(project).commitDocument(document)
+            }
+        val index = stepList.selectedIndex
+        load()
+        if (steps.size > 0) stepList.selectedIndex = (index + 1).coerceIn(0, steps.size - 1)
+        setStatus("Added ${TapeWriter.renderStep(step)}")
     }
 
     private fun selectedStep(): Step? = parsed?.steps?.getOrNull(stepList.selectedIndex)
 
     private fun selectedSourceLine(): Int? = parsed?.stepLines?.getOrNull(stepList.selectedIndex)
 
-    /** Rebuilds the selected step from the fields and writes it back. */
+    /** Rebuilds the selected step from the fields, command included, and writes it back. */
     private fun applySelectedStep() {
-        val step = selectedStep() ?: return
-        val ms = stepDuration.value as Int
-        val text = stepText.text.trim()
-        val updated: Step = when (step) {
-            is Step.Sleep -> Step.Sleep(ms)
-            is Step.Glide -> Step.Glide(ms)
-            is Step.Caret -> Step.Caret(stepLine.value as Int, text.ifBlank { step.anchor })
-            is Step.Popup -> Step.Popup(text.ifBlank { step.label })
-            is Step.Action -> Step.Action(text.ifBlank { step.id })
-            is Step.Key -> Step.Key(text.ifBlank { step.name })
-            is Step.Open -> Step.Open(text.ifBlank { step.path })
-            is Step.Click -> step
+        if (selectedStep() == null) return
+        val updated = runCatching { stepFromFields() }.getOrElse {
+            setStatus(it.message ?: "Cannot build that command", error = true)
+            return
         }
         editTape { source, line -> TapeWriter.replaceStep(source, line, updated) }
+        setStatus("Wrote ${TapeWriter.renderStep(updated)}")
     }
 
     private fun moveSelected(delta: Int) {
@@ -419,6 +511,7 @@ class DemoDriverPanel(private val project: Project) : JPanel(BorderLayout()) {
             width = (width.value as Int),
             framerate = (framerate.value as Int),
             cursor = cursor.isSelected,
+            tooltips = tooltips.isSelected,
             snap = snap.isSelected,
         )
         if (updated == existing) return
@@ -538,6 +631,19 @@ class DemoDriverPanel(private val project: Project) : JPanel(BorderLayout()) {
     }
 
     private companion object {
+        val STEP_KINDS = arrayOf(
+            "Open", "Caret", "Select", "Scroll", "Glide", "Click", "CtrlClick",
+            "Popup", "Action", "Key", "Sleep", "WaitFor")
+        val TEXT_HINTS = mapOf(
+            "Open" to "Path, relative to the project or absolute",
+            "Caret" to "Anchor text; add  nth 2  to pick a later occurrence on the line",
+            "Select" to "Anchor text to select; add  nth 2  for a later occurrence",
+            "Scroll" to "No text; set the line instead",
+            "Popup" to "Row label, matched exactly first then loosely",
+            "Action" to "IDE action id, for example GotoDeclaration or Back",
+            "Key" to "Escape, Enter, Tab, Up, Down, Left, Right",
+            "WaitFor" to "popup or editor",
+        )
         val CROP_MODES = arrayOf(
             "window", "editor", "component", "region", "fit", "follow mouse", "follow caret")
         val MODES_WITH_ARG = setOf("component", "region", "follow mouse", "follow caret")

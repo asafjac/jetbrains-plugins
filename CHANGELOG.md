@@ -5,6 +5,48 @@ moves at its own pace, so its version is what to read here rather than the tag.
 
 ## Demo Driver
 
+### 0.5.0
+
+An edge-case pass over recording and replay. Each of these made a tape replay differently from the
+take it came from.
+
+- Anchors carry their occurrence. `caret()` took the first match of the anchor on the line, so
+  clicking the second `Baz` in `FooRegistry.qux.Baz` replayed as the first; a recorded step now says
+  `nth 2` where it means it.
+- Popup labels match exactly first, then on the leading name, then as a prefix, and only then as a
+  substring. Plain `contains` meant the label `Bar` also matched a row reading `AcmeBar`, so a tape
+  asking for the base implementation silently took an override.
+- The line in a `Caret` is a hint, not a requirement: the line is searched first and the whole file
+  second, so inserting a line above a target no longer breaks the tape. The old behaviour contradicted
+  the comment claiming anchors survive edits.
+- Files outside the project root resolve. An absolute path was being looked up as
+  `$projectRoot/$absolutePath`, so stepping into a library during a recording produced an `Open` that
+  could never work.
+- The popup to act on is chosen focused-window-first. Any showing list anywhere was taken, so a
+  notification balloon or a stale popup could be picked over the one the step meant.
+- Scrolling is recorded and replayed, coalesced so a wheel flick is one `Scroll` step rather than
+  thirty. It had been filtered out as noise, so a demo that scrolled to reveal code replayed without
+  the reveal.
+- Selections are recorded as `Select`, for single-line selections; a multi-line drag has no single
+  anchor to name, so those still record only the caret.
+- Waits are adaptive. `Popup` waits for the popup to exist, `Open` waits for the editor to be laid
+  out, and a new `WaitFor popup|editor` step makes it explicit. A fixed sleep has to be long enough
+  for the slowest machine and still loses to an indexing pass.
+- Long pauses survive. The cap was four seconds, which silently shortened any deliberate beat; it is
+  twenty now, high enough to be generous and low enough that walking away does not leave dead air.
+- The post-navigation suppression counts rather than times out. A blanket window dropped anything
+  genuinely done in the moment after navigating; a navigation moves the caret once, so exactly one
+  event is now allowed for.
+- `Set Tooltips off`, with a checkbox in the panel, stops the replay's own pointer motion raising
+  quick documentation that was never in the recording. The previous setting is restored afterwards,
+  including when the take fails.
+- Actions run against the editor's data context and are checked for being enabled first. An action
+  recorded while a popup had focus resolved against whatever held focus at replay time and silently
+  did nothing, leaving the take looking fine and missing the step that mattered.
+- The step editor can change the command itself, not only its arguments, and add new steps. A
+  conversion drops fields the new command does not use rather than carrying invisible state the tape
+  cannot express.
+
 ### 0.4.0
 
 Recording got the details wrong in ways that made replay fail rather than merely look off.

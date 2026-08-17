@@ -1,49 +1,56 @@
 # The Registry Navigator demo, as a tape.
 #
-# Targets are text, not pixels: "the anchor Baz on line 39". The plugin asks the editor where
-# that lands, so this file keeps working after a font, theme, zoom or window change - which is
-# the whole reason it exists.
+# Targets are text, not pixels: "the anchor Baz on line 39". The plugin asks the editor where that
+# lands, so this keeps working after a font, theme, zoom or window change. The line is a hint, so it
+# also survives lines being inserted above the target.
 
 Output docs/with-plugin.gif
 Output docs/with-plugin.mp4
 
-# fit reads the Caret targets below and frames their bounding box, so the shot contains the
-# demo and nothing else. Swap for: window | editor | component "Project"
+# fit reads the Caret targets below and frames their bounding box, so the shot contains the demo and
+# nothing else. Swap for: window | editor | component "Project"
 #   | region 360,160 1030x600 | follow caret 950x415 ease 350ms
 Set Crop fit
 Set Padding 24
 Set Cursor on
+# The pointer travels across code, which would otherwise raise quick documentation over the thing
+# being demonstrated.
+Set Tooltips off
 Set Framerate 10
 Set Width 940
 
 Open demo/src/App.tsx
+WaitFor editor 5s
 Sleep 1s
 
 # The payoff: one click on a nested slot lists every implementation at once.
 Caret 39 "Baz"
 Glide 800ms
 CtrlClick
-Sleep 2s
+WaitFor popup 5s
+Sleep 1.5s
 
-# Pick the override by name. Never by row number - that breaks the moment a new
-# implementation is added and the row order shifts.
+# Pick the override by name. Matched exactly before loosely, so this cannot take AcmeBaz when it
+# asked for Baz, or the reverse.
 Popup "AcmeBaz"
-Sleep 2600ms
+Sleep 2.6s
 
 Action Back
-Sleep 1600ms
+Sleep 1.6s
 
 # The middle segment answers a different question: the slot getters.
 Caret 39 "qux"
 Glide 700ms
 CtrlClick
-Sleep 2200ms
+WaitFor popup 5s
+Sleep 1.8s
 Key Escape
-Sleep 900ms
+Sleep 0.9s
 
 # And the leading segment: the registry classes themselves.
 Caret 39 "FooRegistry"
 Glide 600ms
 CtrlClick
-Sleep 2400ms
+WaitFor popup 5s
+Sleep 2s
 Key Escape

@@ -44,15 +44,42 @@ object PopupRows {
         }
     }
 
-    /** The first showing list with rows, in any visible window. */
+    /**
+     * The popup list to act on.
+     *
+     * Windows are searched focused-first, because more than one can be showing: a notification
+     * balloon or a stale popup elsewhere would otherwise be picked over the one the step meant.
+     */
     fun visibleList(): JList<*>? {
-        for (window in Window.getWindows()) {
-            if (!window.isShowing) continue
+        val windows = Window.getWindows().filter { it.isShowing }
+        val ordered = windows.sortedByDescending { it.isFocused || it.isActive }
+        for (window in ordered) {
             descendants(window).filterIsInstance<JList<*>>()
                 .firstOrNull { it.isShowing && it.model.size > 0 && isPopupList(it) }
                 ?.let { return it }
         }
         return null
+    }
+
+    fun allRows(list: JList<*>): List<String> =
+        (0 until list.model.size).map { renderedText(list, it) }
+
+    /**
+     * The row [label] identifies, preferring precision over convenience.
+     *
+     * Exact, then leading-name, then prefix, and only then a substring. A plain `contains` picked
+     * `AcmeBar` for the label `Bar`, so a tape asking for the base implementation silently took an
+     * override instead - and both spellings exist side by side in any registry worth demoing.
+     */
+    fun indexOf(list: JList<*>, label: String): Int {
+        val rows = allRows(list)
+        val wanted = label.trim()
+
+        rows.indexOfFirst { it.equals(wanted, ignoreCase = true) }.let { if (it >= 0) return it }
+        rows.indexOfFirst { it.substringBefore(" (").trim().equals(wanted, ignoreCase = true) }
+            .let { if (it >= 0) return it }
+        rows.indexOfFirst { it.startsWith(wanted, ignoreCase = true) }.let { if (it >= 0) return it }
+        return rows.indexOfFirst { it.contains(wanted, ignoreCase = true) }
     }
 
     /**

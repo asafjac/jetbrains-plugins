@@ -16,7 +16,7 @@ object TapeWriter {
     private const val NL = "\n"
 
     private val MANAGED_SETTINGS = setOf(
-        "crop", "padding", "cursor", "snap", "redact", "framerate", "width", "ffmpeg",
+        "crop", "padding", "cursor", "tooltips", "snap", "redact", "framerate", "width", "ffmpeg",
     )
 
     fun render(crop: Crop): String = when (crop) {
@@ -31,14 +31,23 @@ object TapeWriter {
     /** A step as tape source, in the canonical spelling the parser reads back. */
     fun renderStep(step: Step): String = when (step) {
         is Step.Open -> "Open ${step.path}"
-        is Step.Caret ->
-            if (step.line > 0) "Caret ${step.line} \"${step.anchor}\"" else "Caret \"${step.anchor}\""
+        is Step.Caret -> "Caret " + anchor(step.line, step.anchor, step.nth)
+        is Step.Select -> "Select " + anchor(step.line, step.anchor, step.nth)
+        is Step.Scroll -> "Scroll ${step.line}"
         is Step.Glide -> "Glide ${duration(step.ms)}"
         is Step.Click -> if (step.ctrl) "CtrlClick" else "Click"
         is Step.Popup -> "Popup \"${step.label}\""
         is Step.Action -> "Action ${step.id}"
         is Step.Key -> "Key ${step.name}"
         is Step.Sleep -> "Sleep ${duration(step.ms)}"
+        is Step.WaitFor -> "WaitFor ${step.what} ${duration(step.ms)}"
+    }
+
+    /** `39 "Baz" nth 2`, omitting the parts that carry no information. */
+    private fun anchor(line: Int, anchor: String, nth: Int): String = buildString {
+        if (line > 0) append(line).append(' ')
+        append('"').append(anchor).append('"')
+        if (nth > 1) append(" nth ").append(nth)
     }
 
     /** Sub-second values read better in milliseconds; longer ones in seconds. */
@@ -50,6 +59,7 @@ object TapeWriter {
         add("Set Crop ${render(settings.crop)}")
         if (settings.padding > 0) add("Set Padding ${settings.padding}")
         if (!settings.cursor) add("Set Cursor off")
+        if (!settings.tooltips) add("Set Tooltips off")
         if (settings.snap) add("Set Snap on")
         settings.redact.forEach { add("Set Redact component \"$it\"") }
         add("Set Framerate ${settings.framerate}")

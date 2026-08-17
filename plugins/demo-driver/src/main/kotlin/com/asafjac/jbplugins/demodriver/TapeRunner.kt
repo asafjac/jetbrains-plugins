@@ -5,6 +5,7 @@ import com.intellij.notification.NotificationGroupManager
 import com.intellij.notification.NotificationType
 import com.intellij.openapi.actionSystem.ActionManager
 import com.intellij.openapi.actionSystem.ActionPlaces
+import com.intellij.openapi.actionSystem.AnActionEvent
 import com.intellij.openapi.actionSystem.ex.ActionUtil
 import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.progress.ProgressIndicator
@@ -53,9 +54,11 @@ object TapeRunner {
 
             indicator.isIndeterminate = false
             var sampler: Thread? = null
+            val tooltips = HoverDocs(tape.settings.tooltips)
             val track = java.util.Collections.synchronizedList(mutableListOf<FollowSample>())
 
             try {
+                tooltips.applyForTake()
                 val recording = tape.settings.outputs.isNotEmpty()
                 if (recording) {
                     indicator.text = "Resolving frame"
@@ -92,6 +95,7 @@ object TapeRunner {
                 notify(project, NotificationType.ERROR,
                     "$tapeName failed at: ${indicator.text ?: "?"} - ${e.message}")
             } finally {
+                tooltips.restore()
                 onFinished()
             }
         }
@@ -129,33 +133,41 @@ object TapeRunner {
             when (step) {
                 is Step.Open -> {
                     targets.openFile(step.path)
-                    // Opening is asynchronous enough that an immediate Caret can land in the
-                    // outgoing editor rather than the incoming one.
-                    Thread.sleep(700)
+                    // Wait for the editor rather than guessing: opening is asynchronous, and a
+                    // fixed pause either wastes time or resolves against the outgoing editor.
+                    targets.waitForEditor(4000)
                 }
-                is Step.Caret -> target = targets.caret(step.line, step.anchor)
+                is Step.Caret -> target = targets.caret(step.line, step.anchor, step.nth)
+                is Step.Select -> target = targets.select(step.line, step.anchor, step.nth)
+                is Step.Scroll -> targets.scrollTo(step.line)
                 is Step.Glide -> pointer.glide(
                     target ?: error("Glide before any Caret - nothing to glide to"), step.ms)
                 is Step.Click -> {
                     target?.let { if (it != pointer.at()) pointer.jump(it) }
                     pointer.click(step.ctrl)
-                    Thread.sleep(400)
+                    Thread.sleep(250)
                 }
                 is Step.Popup -> {
-                    // Let the popup finish appearing before its rows are measured.
-                    Thread.sleep(500)
+                    // popupRow waits for the popup itself, so no sleep is needed here.
                     val row = targets.popupRow(step.label)
                     pointer.glide(row, 450)
-                    Thread.sleep(350)
+                    Thread.sleep(300)
                     pointer.click(ctrl = false)
-                    Thread.sleep(400)
+                    Thread.sleep(300)
                 }
                 is Step.Action -> {
                     invokeAction(step.id)
-                    Thread.sleep(600)
+                    Thread.sleep(500)
                 }
                 is Step.Key -> pointer.key(step.name)
                 is Step.Sleep -> Thread.sleep(step.ms.toLong())
+                is Step.WaitFor -> {
+                    val arrived = when (step.what) {
+                        "popup" -> targets.waitForPopup(step.ms)
+                        else -> targets.waitForEditor(step.ms)
+                    }
+                    if (!arrived) error("waited ${step.ms}ms for ${step.what} and it did not appear")
+                }
             }
         }
 
@@ -169,24 +181,54 @@ object TapeRunner {
         private fun invokeAction(id: String) {
             val action = ActionManager.getInstance().getAction(id)
                 ?: error("no such IDE action id: '$id'")
+            var problem: String? = null
             ApplicationManager.getApplication().invokeAndWait {
-                val focused = IdeFocusManager.getInstance(project).focusOwner
+                // Prefer the editor's context over the focus owner's. An action recorded while a
+                // popup or the tool window had focus resolves against whatever holds focus at
+                // replay time, and silently does nothing when that is the wrong component.
+                val editor = com.intellij.openapi.fileEditor.FileEditorManager
+                    .getInstance(project).selectedTextEditor
+                val component = editor?.contentComponent
+                    ?: IdeFocusManager.getInstance(project).focusOwner
                     ?: WindowManager.getInstance().getFrame(project)?.rootPane
-                    ?: error("nothing focused to run '$id' against")
-                val context = DataManager.getInstance().getDataContext(focused)
+                if (component == null) {
+                    problem = "nothing focused to run '$id' against"
+                    return@invokeAndWait
+                }
+                editor?.contentComponent?.requestFocusInWindow()
+                val context = DataManager.getInstance().getDataContext(component)
+                val event = AnActionEvent.createFromAnAction(
+                    action, null, ActionPlaces.UNKNOWN, context)
+                action.update(event)
+                // Reporting a disabled action beats invoking it into the void: the take continues
+                // looking fine and the recording is quietly missing the step that mattered.
+                if (!event.presentation.isEnabled) {
+                    problem = "action '$id' is disabled in this context, so it would do nothing"
+                    return@invokeAndWait
+                }
                 ActionUtil.invokeAction(action, context, ActionPlaces.UNKNOWN, null, null)
             }
+            problem?.let { error(it) }
         }
     }
 
     fun describe(step: Step): String = when (step) {
         is Step.Open -> "open ${step.path}"
-        is Step.Caret -> "caret \"${step.anchor}\"" + if (step.line > 0) " (line ${step.line})" else ""
+        is Step.Caret -> "caret " + anchorOf(step.line, step.anchor, step.nth)
+        is Step.Select -> "select " + anchorOf(step.line, step.anchor, step.nth)
+        is Step.Scroll -> "scroll to line ${step.line}"
         is Step.Glide -> "glide ${step.ms}ms"
         is Step.Click -> if (step.ctrl) "ctrl+click" else "click"
         is Step.Popup -> "popup pick \"${step.label}\""
         is Step.Action -> "action ${step.id}"
         is Step.Key -> "key ${step.name}"
         is Step.Sleep -> "sleep ${step.ms}ms"
+        is Step.WaitFor -> "wait for ${step.what} (max ${step.ms}ms)"
+    }
+
+    private fun anchorOf(line: Int, anchor: String, nth: Int): String = buildString {
+        append('"').append(anchor).append('"')
+        if (line > 0) append(" line ").append(line)
+        if (nth > 1) append(" #").append(nth)
     }
 }

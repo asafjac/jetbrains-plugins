@@ -3,26 +3,35 @@ package com.asafjac.jbplugins.demodriver
 /**
  * One instruction in a tape.
  *
- * Targets are symbolic on purpose. A step says "the text `Baz` on line 39", never a pixel,
- * so a font change, a window resize or a zoom level cannot invalidate a tape that used to
- * work. Resolving a symbol to a coordinate is [DemoRunner]'s job, done fresh on every run.
+ * Targets are symbolic on purpose. A step says "the text `Baz` on line 39", never a pixel, so a
+ * font change, a window resize or a zoom level cannot invalidate a tape that used to work.
  */
 sealed interface Step {
-    /** Open a file, path relative to the project root. */
+
+    /** Open a file. Relative to the project root, or absolute for anything outside it. */
     data class Open(val path: String) : Step
 
     /**
-     * Put the caret on [anchor] within [line], and make that the current mouse target.
-     * A line of 0 means "first occurrence anywhere in the file".
+     * Put the caret on [anchor] and make it the current mouse target.
+     *
+     * [line] is a hint rather than a requirement: it is searched first, then the whole file, so a
+     * tape survives lines being inserted above its target. [nth] picks which occurrence, because a
+     * dotted path can repeat a word on one line and the first match is often the wrong one.
      */
-    data class Caret(val line: Int, val anchor: String) : Step
+    data class Caret(val line: Int, val anchor: String, val nth: Int = 1) : Step
+
+    /** Select [anchor] rather than just placing the caret in it. */
+    data class Select(val line: Int, val anchor: String, val nth: Int = 1) : Step
+
+    /** Scroll so [line] is visible, without moving the caret. */
+    data class Scroll(val line: Int) : Step
 
     /** Move the pointer to the current target over [ms], eased. */
     data class Glide(val ms: Int) : Step
 
     data class Click(val ctrl: Boolean) : Step
 
-    /** Pick a row from the popup that is currently open, matched on its visible text. */
+    /** Pick a row from the open popup, matched on its visible text. */
     data class Popup(val label: String) : Step
 
     /** Invoke an IDE action by id, e.g. `Back`, `GotoImplementation`. */
@@ -32,14 +41,22 @@ sealed interface Step {
     data class Key(val name: String) : Step
 
     data class Sleep(val ms: Int) : Step
+
+    /**
+     * Wait for something to appear, up to [ms].
+     *
+     * The alternative is a fixed `Sleep` long enough for the slowest machine, which makes every take
+     * drag on every other machine and still fails when indexing picks that moment.
+     */
+    data class WaitFor(val what: String, val ms: Int) : Step
 }
 
 /**
  * Capture settings, all optional with usable defaults.
  *
- * Every field here is written by exactly one `Set` line and nothing else, so the panel and
- * the tape can round-trip: no setting exists that only a UI can express, which is what keeps
- * a hand-written or generated tape a first-class input rather than a degraded one.
+ * Every field is written by exactly one `Set` line and nothing else, so the panel and the tape can
+ * round-trip: no setting exists that only a UI can express, which is what keeps a hand-written or
+ * generated tape a first-class input rather than a degraded one.
  */
 data class TapeSettings(
     val outputs: List<String> = emptyList(),
@@ -49,6 +66,13 @@ data class TapeSettings(
     /** Grown around the resolved crop, ignored for an absolute Region. */
     val padding: Int = 0,
     val cursor: Boolean = true,
+    /**
+     * Whether hover documentation may appear during a take.
+     *
+     * On by default, because a demo of a hover feature needs them; switchable because the replay's
+     * own pointer motion raises tooltips that were never in the recording.
+     */
+    val tooltips: Boolean = true,
     /** Named components painted over, for hiding a tool window that shows real work. */
     val redact: List<String> = emptyList(),
     /** Round a Region's edges out to nearby component edges. */
@@ -59,8 +83,8 @@ data class TapeSettings(
 /**
  * A parsed tape.
  *
- * [stepLines] holds the 1-based source line each step came from, parallel to [steps]. Editing a
- * step means rewriting exactly that line, which is what lets the panel change one duration without
+ * [stepLines] holds the 1-based source line each step came from, parallel to [steps]. Editing a step
+ * means rewriting exactly that line, which is what lets the panel change one duration without
  * reformatting the file or disturbing the comments around it.
  */
 data class Tape(
@@ -70,20 +94,9 @@ data class Tape(
 )
 
 /**
- * Reads the tape format, which is deliberately shaped like a charmbracelet/vhs `.tape`:
- * `Set` for configuration, `Output` for destinations, verbs for actions, `#` for comments.
- * Following an existing convention rather than inventing one means a reader who has met VHS
- * already knows how to skim this.
- *
- *     Output docs/demo.gif
- *     Set Framerate 10
- *
- *     Open demo/src/App.tsx
- *     Caret 39 "Baz"
- *     Glide 800ms
- *     CtrlClick
- *     Sleep 2s
- *     Popup "AcmeBaz"
+ * Reads the tape format, deliberately shaped like a charmbracelet/vhs `.tape`: `Set` for
+ * configuration, `Output` for destinations, verbs for actions, `#` for comments. Following an
+ * existing convention rather than inventing one means a reader who has met VHS can skim this.
  */
 object TapeParser {
 
@@ -96,9 +109,9 @@ object TapeParser {
 
         text.lines().forEachIndexed { index, raw ->
             val lineNo = index + 1
-            // Strip comments, but not inside a quoted anchor - anchors can legitimately
-            // contain a '#', and silently truncating one would produce a target that is
-            // never found, reported as "anchor not found" far from the real cause.
+            // Strip comments, but not inside a quoted anchor: anchors can contain a '#', and
+            // truncating one silently produces a target that is never found, reported far from the
+            // real cause.
             val line = stripComment(raw).trim()
             if (line.isEmpty()) return@forEachIndexed
 
@@ -110,7 +123,9 @@ object TapeParser {
                 "output" -> settings = settings.copy(outputs = settings.outputs + rest)
                 "set" -> settings = applySetting(settings, rest, lineNo)
                 "open" -> steps += Step.Open(rest.trim('"'))
-                "caret" -> steps += parseCaret(rest, lineNo)
+                "caret" -> steps += anchored(rest, lineNo) { l, a, n -> Step.Caret(l, a, n) }
+                "select" -> steps += anchored(rest, lineNo) { l, a, n -> Step.Select(l, a, n) }
+                "scroll" -> steps += Step.Scroll(int(rest, "Scroll", lineNo))
                 "glide" -> steps += Step.Glide(duration(rest, lineNo))
                 "click" -> steps += Step.Click(ctrl = false)
                 "ctrlclick" -> steps += Step.Click(ctrl = true)
@@ -118,6 +133,7 @@ object TapeParser {
                 "action" -> steps += Step.Action(rest.trim('"'))
                 "key" -> steps += Step.Key(rest.trim('"'))
                 "sleep" -> steps += Step.Sleep(duration(rest, lineNo))
+                "waitfor" -> steps += parseWaitFor(rest, lineNo)
                 else -> throw ParseError(lineNo, "unknown command '$verb'")
             }
             if (steps.size > before) stepLines += lineNo
@@ -137,24 +153,25 @@ object TapeParser {
     private fun applySetting(current: TapeSettings, rest: String, lineNo: Int): TapeSettings {
         val key = rest.substringBefore(' ').lowercase()
         // Quotes are stripped per setting, not here: a composite value such as
-        // `component "Project"` ends in a quote, so trimming globally would eat the closing
-        // one and leave an unbalanced string for parseCrop to choke on.
+        // `component "Project"` ends in a quote, so trimming globally would eat the closing one.
         val value = rest.substringAfter(' ', "").trim()
         return when (key) {
-            "framerate" -> current.copy(framerate = value.trim('"').toIntOrNull()
-                ?: throw ParseError(lineNo, "Framerate needs a number, got '$value'"))
-            "width" -> current.copy(width = value.trim('"').toIntOrNull()
-                ?: throw ParseError(lineNo, "Width needs a number, got '$value'"))
-            "padding" -> current.copy(padding = value.trim('"').toIntOrNull()
-                ?: throw ParseError(lineNo, "Padding needs a number, got '$value'"))
+            "framerate" -> current.copy(framerate = int(value, "Framerate", lineNo))
+            "width" -> current.copy(width = int(value, "Width", lineNo))
+            "padding" -> current.copy(padding = int(value, "Padding", lineNo))
             "cursor" -> current.copy(cursor = onOff(value.trim('"'), lineNo))
+            "tooltips" -> current.copy(tooltips = onOff(value.trim('"'), lineNo))
             "snap" -> current.copy(snap = onOff(value.trim('"'), lineNo))
-            "redact" -> current.copy(redact = current.redact + parseComponentName(value, lineNo))
+            "redact" -> current.copy(redact = current.redact + componentName(value, lineNo))
             "crop" -> current.copy(crop = parseCrop(value, lineNo))
             "ffmpeg" -> current.copy(ffmpeg = value.trim('"'))
             else -> throw ParseError(lineNo, "unknown setting '$key'")
         }
     }
+
+    private fun int(value: String, what: String, lineNo: Int): Int =
+        value.trim().trim('"').toIntOrNull()
+            ?: throw ParseError(lineNo, "$what needs a number, got '$value'")
 
     private fun onOff(value: String, lineNo: Int): Boolean = when (value.lowercase()) {
         "on", "true", "yes" -> true
@@ -162,11 +179,47 @@ object TapeParser {
         else -> throw ParseError(lineNo, "expected on or off, got '$value'")
     }
 
-    /** `component "Project"` -> `Project`; a bare word is accepted too. */
-    private fun parseComponentName(value: String, lineNo: Int): String {
+    private fun componentName(value: String, lineNo: Int): String {
         val rest = value.removePrefix("component").trim()
         if (rest.isEmpty()) throw ParseError(lineNo, "Redact needs a component name")
         return rest.trim('"')
+    }
+
+    private fun parseWaitFor(rest: String, lineNo: Int): Step.WaitFor {
+        val what = rest.substringBefore(' ').lowercase()
+        if (what.isEmpty()) throw ParseError(lineNo, "WaitFor needs a target, e.g. popup")
+        if (what !in setOf("popup", "editor")) {
+            throw ParseError(lineNo, "WaitFor takes popup or editor, got '$what'")
+        }
+        val timeout = rest.substringAfter(' ', "").trim()
+        return Step.WaitFor(what, if (timeout.isEmpty()) 5000 else duration(timeout, lineNo))
+    }
+
+    /** `<verb> [line] "anchor" [nth N]` - the shape Caret and Select share. */
+    private fun <T> anchored(rest: String, lineNo: Int, build: (Int, String, Int) -> T): T {
+        val quoteAt = rest.indexOf('"')
+        if (quoteAt < 0) throw ParseError(lineNo, "needs a quoted anchor, e.g. 39 \"Baz\"")
+        val linePart = rest.substring(0, quoteAt).trim()
+        val line = if (linePart.isEmpty()) 0 else linePart.toIntOrNull()
+            ?: throw ParseError(lineNo, "line must be a number, got '$linePart'")
+
+        val closeAt = rest.indexOf('"', quoteAt + 1)
+        if (closeAt < 0) throw ParseError(lineNo, "unterminated anchor in '$rest'")
+        val anchor = rest.substring(quoteAt + 1, closeAt)
+
+        val tail = rest.substring(closeAt + 1).trim().split(' ').filter { it.isNotBlank() }
+        val nth = if (tail.size >= 2 && tail[0].equals("nth", ignoreCase = true)) {
+            tail[1].toIntOrNull() ?: throw ParseError(lineNo, "nth must be a number, got '${tail[1]}'")
+        } else 1
+        if (nth < 1) throw ParseError(lineNo, "nth starts at 1")
+        return build(line, anchor, nth)
+    }
+
+    private fun quoted(text: String, lineNo: Int): String {
+        val open = text.indexOf('"')
+        val close = text.lastIndexOf('"')
+        if (open < 0 || close <= open) throw ParseError(lineNo, "expected a quoted string in '$text'")
+        return text.substring(open + 1, close)
     }
 
     /**
@@ -184,21 +237,15 @@ object TapeParser {
                 value.substringAfter("component").trim().trim('"')
                     .ifEmpty { throw ParseError(lineNo, "Crop component needs a name") })
             "region" -> {
-                // "region 360,160 1030x600"
                 val origin = parts.getOrNull(1) ?: throw ParseError(lineNo, "region needs X,Y")
                 val size = parts.getOrNull(2) ?: throw ParseError(lineNo, "region needs WxH")
-                val (x, y) = origin.split(',').also {
-                    if (it.size != 2) throw ParseError(lineNo, "region origin must be X,Y")
-                }
-                val (w, h) = size.lowercase().split('x').also {
-                    if (it.size != 2) throw ParseError(lineNo, "region size must be WxH")
-                }
+                val xy = origin.split(',')
+                if (xy.size != 2) throw ParseError(lineNo, "region origin must be X,Y")
+                val wh = size.lowercase().split('x')
+                if (wh.size != 2) throw ParseError(lineNo, "region size must be WxH")
                 Crop.Region(
-                    x.trim().toIntOrNull() ?: throw ParseError(lineNo, "bad region X '$x'"),
-                    y.trim().toIntOrNull() ?: throw ParseError(lineNo, "bad region Y '$y'"),
-                    w.trim().toIntOrNull() ?: throw ParseError(lineNo, "bad region width '$w'"),
-                    h.trim().toIntOrNull() ?: throw ParseError(lineNo, "bad region height '$h'"),
-                )
+                    int(xy[0], "region X", lineNo), int(xy[1], "region Y", lineNo),
+                    int(wh[0], "region width", lineNo), int(wh[1], "region height", lineNo))
             }
             "follow" -> {
                 val what = parts.getOrNull(1)?.lowercase()
@@ -206,42 +253,19 @@ object TapeParser {
                 if (what !in setOf("mouse", "caret")) {
                     throw ParseError(lineNo, "follow takes mouse or caret, got '$what'")
                 }
-                val size = parts.getOrNull(2) ?: throw ParseError(lineNo, "follow needs WxH")
-                val (w, h) = size.lowercase().split('x').also {
-                    if (it.size != 2) throw ParseError(lineNo, "follow size must be WxH")
-                }
-                val easeAt = parts.indexOfFirst { it.equals("ease", true) }
-                val ease = if (easeAt >= 0) durationOrNull(parts.getOrNull(easeAt + 1)) ?: 350 else 350
+                val wh = (parts.getOrNull(2) ?: throw ParseError(lineNo, "follow needs WxH"))
+                    .lowercase().split('x')
+                if (wh.size != 2) throw ParseError(lineNo, "follow size must be WxH")
+                val easeAt = parts.indexOfFirst { it.equals("ease", ignoreCase = true) }
+                val ease = if (easeAt >= 0) {
+                    parts.getOrNull(easeAt + 1)
+                        ?.let { runCatching { duration(it, lineNo) }.getOrNull() } ?: 350
+                } else 350
                 Crop.Follow(
-                    what,
-                    w.trim().toIntOrNull() ?: throw ParseError(lineNo, "bad follow width '$w'"),
-                    h.trim().toIntOrNull() ?: throw ParseError(lineNo, "bad follow height '$h'"),
-                    ease,
-                )
+                    what, int(wh[0], "follow width", lineNo), int(wh[1], "follow height", lineNo), ease)
             }
             else -> throw ParseError(lineNo, "unknown crop mode '${parts[0]}'")
         }
-    }
-
-    private fun durationOrNull(text: String?): Int? = text?.let {
-        runCatching { duration(it, 0) }.getOrNull()
-    }
-
-    /** `Caret 39 "Baz"` or `Caret "Baz"` for the first occurrence in the file. */
-    private fun parseCaret(rest: String, lineNo: Int): Step.Caret {
-        val quoteAt = rest.indexOf('"')
-        if (quoteAt < 0) throw ParseError(lineNo, "Caret needs a quoted anchor, e.g. Caret 39 \"Baz\"")
-        val linePart = rest.substring(0, quoteAt).trim()
-        val line = if (linePart.isEmpty()) 0 else linePart.toIntOrNull()
-            ?: throw ParseError(lineNo, "Caret line must be a number, got '$linePart'")
-        return Step.Caret(line, quoted(rest.substring(quoteAt), lineNo))
-    }
-
-    private fun quoted(text: String, lineNo: Int): String {
-        val open = text.indexOf('"')
-        val close = text.lastIndexOf('"')
-        if (open < 0 || close <= open) throw ParseError(lineNo, "expected a quoted string in '$text'")
-        return text.substring(open + 1, close)
     }
 
     /** `800ms`, `2s`, `2.5s`, or a bare number read as milliseconds. */

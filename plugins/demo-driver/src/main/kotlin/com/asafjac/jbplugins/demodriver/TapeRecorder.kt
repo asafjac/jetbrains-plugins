@@ -10,6 +10,10 @@ import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.editor.EditorFactory
 import com.intellij.openapi.editor.event.CaretEvent
 import com.intellij.openapi.editor.event.CaretListener
+import com.intellij.openapi.editor.event.SelectionEvent
+import com.intellij.openapi.editor.event.SelectionListener
+import com.intellij.openapi.editor.event.VisibleAreaEvent
+import com.intellij.openapi.editor.event.VisibleAreaListener
 import com.intellij.openapi.fileEditor.FileDocumentManager
 import com.intellij.openapi.fileEditor.FileEditorManagerEvent
 import com.intellij.openapi.fileEditor.FileEditorManagerListener
@@ -52,11 +56,13 @@ class TapeRecorder(private val project: Project) {
     private var awtListener: AWTEventListener? = null
 
     /**
-     * Steps arriving before this are consequences of a navigation rather than intent.
+     * Caret events still to be treated as a navigation's own doing rather than as intent.
      *
-     * Picking a popup row opens a file and moves a caret, and recording those would make the replay
-     * click at the destination it had just been sent to.
+     * Counted rather than timed. A blanket window dropped anything the user genuinely did in the
+     * moment after navigating; a navigation only ever moves the caret once, so allowing exactly one
+     * and a short deadline keeps real intent while still not recording the landing.
      */
+    private var suppressCarets = 0
     private var suppressUntil = 0L
 
     /** Where in [lines] the most recent raw gesture began, so an action can replace it. */
@@ -77,9 +83,14 @@ class TapeRecorder(private val project: Project) {
         val parent = Disposer.newDisposable("demo-driver-recorder")
         disposable = parent
 
-        EditorFactory.getInstance().eventMulticaster.addCaretListener(object : CaretListener {
+        val multicaster = EditorFactory.getInstance().eventMulticaster
+        multicaster.addCaretListener(object : CaretListener {
             override fun caretPositionChanged(event: CaretEvent) = recordCaret(event)
         }, parent)
+        multicaster.addSelectionListener(object : SelectionListener {
+            override fun selectionChanged(event: SelectionEvent) = recordSelection(event)
+        }, parent)
+        multicaster.addVisibleAreaListener(VisibleAreaListener { recordScroll(it) }, parent)
 
         project.messageBus.connect(parent).subscribe(
             FileEditorManagerListener.FILE_EDITOR_MANAGER,
@@ -264,9 +275,83 @@ class TapeRecorder(private val project: Project) {
         // aimed every later step at the wrong document.
         FileDocumentManager.getInstance().getFile(document)?.let { ensureFile(relative(it.path)) }
 
+        // Which occurrence, because a dotted path repeats words on one line and replaying the
+        // first match would send the pointer to a different segment than the one clicked.
+        val nth = occurrenceOf(document.charsSequence, document, line, anchor, offset)
+        val step = "Caret $line \"$anchor\"" + if (nth > 1) " nth $nth" else ""
         // Collapse a repeat of the same target: a click often produces several caret events.
-        val step = "Caret $line \"$anchor\""
         if (lines.lastOrNull() == step) return
+        gap()
+        lines += step
+    }
+
+    /** Which occurrence of [anchor] on [line] contains [offset], 1-based. */
+    private fun occurrenceOf(
+        text: CharSequence,
+        document: com.intellij.openapi.editor.Document,
+        line: Int,
+        anchor: String,
+        offset: Int,
+    ): Int {
+        val index = line - 1
+        if (index < 0 || index >= document.lineCount) return 1
+        val from = document.getLineStartOffset(index)
+        val to = document.getLineEndOffset(index)
+        val whole = text.toString()
+        var at = from
+        var seen = 0
+        while (at < to) {
+            val found = whole.indexOf(anchor, at)
+            if (found < 0 || found >= to) break
+            seen++
+            if (offset in found..(found + anchor.length)) return seen
+            at = found + 1
+        }
+        return 1
+    }
+
+    private fun recordSelection(event: SelectionEvent) {
+        val editor = event.editor
+        if (editor.project != null && editor.project != project) return
+        val range = event.newRange ?: return
+        if (range.length == 0) return
+
+        val document = editor.document
+        val selected = runCatching { document.getText(range) }.getOrNull() ?: return
+        // A multi-line drag has no single anchor to name, and reproducing it faithfully needs a
+        // range rather than a target, which the format does not carry; the caret step still lands
+        // in the right place, so the take is close rather than wrong.
+        if (selected.contains('\n') || selected.isBlank()) return
+
+        FileDocumentManager.getInstance().getFile(document)?.let { ensureFile(relative(it.path)) }
+        val line = document.getLineNumber(range.startOffset) + 1
+        val step = "Select $line \"$selected\""
+        if (lines.lastOrNull() == step) return
+        gap()
+        lines += step
+    }
+
+    /**
+     * Records a scroll, coalescing a flick of the wheel into one step.
+     *
+     * Scrolling was ignored entirely, so a demo that scrolled to reveal code replayed without the
+     * reveal and the viewer saw the wrong part of the file.
+     */
+    private fun recordScroll(event: VisibleAreaEvent) {
+        val editor = event.editor
+        if (editor.project != null && editor.project != project) return
+        val oldY = event.oldRectangle?.y ?: return
+        val newY = event.newRectangle.y
+        if (kotlin.math.abs(newY - oldY) < editor.lineHeight * 2) return
+
+        val topLine = editor.xyToLogicalPosition(java.awt.Point(0, newY)).line + 1
+        val step = "Scroll $topLine"
+        // Replace the previous scroll rather than appending: a wheel flick fires many events and a
+        // tape of thirty Scroll steps replays as a stutter.
+        if (lines.lastOrNull()?.startsWith("Scroll ") == true) {
+            lines[lines.size - 1] = step
+            return
+        }
         gap()
         lines += step
     }
@@ -287,10 +372,20 @@ class TapeRecorder(private val project: Project) {
     }
 
     private fun suppress() {
+        suppressCarets = 1
         suppressUntil = System.currentTimeMillis() + SUPPRESS_MS
     }
 
-    private fun suppressed(): Boolean = System.currentTimeMillis() < suppressUntil
+    /** True while a navigation's own caret move is still expected, consuming the allowance. */
+    private fun suppressed(): Boolean {
+        if (suppressCarets <= 0) return false
+        if (System.currentTimeMillis() >= suppressUntil) {
+            suppressCarets = 0
+            return false
+        }
+        suppressCarets--
+        return true
+    }
 
     /**
      * Emits the pause since the previous step.
@@ -327,8 +422,13 @@ class TapeRecorder(private val project: Project) {
 
     private companion object {
         const val MIN_GAP_MS = 250L
-        /** A pause longer than this is someone thinking, not part of the demo. */
-        const val MAX_GAP_MS = 4000L
+        /**
+         * The longest pause kept verbatim.
+         *
+         * Was four seconds, which silently shortened any deliberate beat in a demo. Generous now,
+         * with a cap only so that walking away mid-recording does not leave a minute of dead air.
+         */
+        const val MAX_GAP_MS = 20000L
         /** How long after a navigation its resulting Open and Caret events are ignored. */
         const val SUPPRESS_MS = 1200L
         /** How soon after a gesture an action is taken to be that gesture's meaning. */
@@ -356,9 +456,7 @@ class TapeRecorder(private val project: Project) {
          */
         val IGNORED_ACTIONS = setOf(
             "DemoDriver.RunTape",
-            "EditorScrollUp", "EditorScrollDown", "EditorUp", "EditorDown",
-            "EditorLeft", "EditorRight", "EditorPageUp", "EditorPageDown",
-            "EditorMouseWheelScroll",
+            "EditorUp", "EditorDown", "EditorLeft", "EditorRight",
             "ActivateDemoDriverToolWindow",
         )
     }
