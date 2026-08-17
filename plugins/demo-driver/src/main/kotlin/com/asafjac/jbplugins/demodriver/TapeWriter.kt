@@ -1,18 +1,19 @@
 package com.asafjac.jbplugins.demodriver
 
 /**
- * Writes settings back into tape text.
+ * Writes settings and steps back into tape text.
  *
  * This is what makes the panel and the file two views of one thing rather than two sources of
- * truth. Without it a control could only ever be a runtime override, and a tape written by hand
- * or by a script would be the second-class input; with it, every control is literally an edit to
- * the file, and the file remains the only state there is.
+ * truth. Without it a control could only ever be a runtime override, and a tape written by hand or
+ * by a script would be the second-class input; with it, every control is literally an edit to the
+ * file, and the file remains the only state there is.
  *
- * Steps, comments, blank lines and ordering are preserved. Only the managed `Set` and `Output`
- * lines are rewritten, and they are put back where the first of them was, so a tape keeps its
- * shape instead of being reformatted out from under whoever wrote it.
+ * Comments, blank lines, indentation and ordering are preserved. Only the lines being changed are
+ * touched, so a tape keeps the shape whoever wrote it gave it.
  */
 object TapeWriter {
+
+    private const val NL = "\n"
 
     private val MANAGED_SETTINGS = setOf(
         "crop", "padding", "cursor", "snap", "redact", "framerate", "width", "ffmpeg",
@@ -27,7 +28,23 @@ object TapeWriter {
         is Crop.Follow -> "follow ${crop.what} ${crop.width}x${crop.height} ease ${crop.easeMs}ms"
     }
 
-    /** The canonical block for [settings], in a stable order so diffs stay small. */
+    /** A step as tape source, in the canonical spelling the parser reads back. */
+    fun renderStep(step: Step): String = when (step) {
+        is Step.Open -> "Open ${step.path}"
+        is Step.Caret ->
+            if (step.line > 0) "Caret ${step.line} \"${step.anchor}\"" else "Caret \"${step.anchor}\""
+        is Step.Glide -> "Glide ${duration(step.ms)}"
+        is Step.Click -> if (step.ctrl) "CtrlClick" else "Click"
+        is Step.Popup -> "Popup \"${step.label}\""
+        is Step.Action -> "Action ${step.id}"
+        is Step.Key -> "Key ${step.name}"
+        is Step.Sleep -> "Sleep ${duration(step.ms)}"
+    }
+
+    /** Sub-second values read better in milliseconds; longer ones in seconds. */
+    private fun duration(ms: Int): String = if (ms < 1000) "${ms}ms" else "${(ms / 100) / 10.0}s"
+
+    /** The canonical settings block, in a stable order so diffs stay small. */
     private fun block(settings: TapeSettings): List<String> = buildList {
         settings.outputs.forEach { add("Output $it") }
         add("Set Crop ${render(settings.crop)}")
@@ -42,7 +59,7 @@ object TapeWriter {
 
     fun apply(text: String, settings: TapeSettings): String {
         val lines = text.lines().toMutableList()
-        val managed = lines.indices.filter { isManaged(lines[it]) }
+        val managed = lines.indices.filter { isManagedSetting(lines[it]) }
 
         // With nothing to replace, the block goes after the leading comment header rather than at
         // the very top, so a tape that opens with an explanation keeps it first.
@@ -52,9 +69,7 @@ object TapeWriter {
         // Removing lines shifts everything after them, so the insert point has to be measured
         // against what is left, not against the original.
         val shift = managed.count { it < insertAt }
-        val at = (insertAt - shift).coerceIn(0, kept.size)
-
-        kept.addAll(at, block(settings))
+        kept.addAll((insertAt - shift).coerceIn(0, kept.size), block(settings))
 
         // Collapse runs of blank lines left behind by removal, without touching anything else.
         val cleaned = mutableListOf<String>()
@@ -62,10 +77,58 @@ object TapeWriter {
             if (line.isBlank() && cleaned.lastOrNull()?.isBlank() == true) return@forEach
             cleaned += line
         }
-        return cleaned.joinToString("\n")
+        return cleaned.joinToString(NL)
     }
 
-    private fun isManaged(line: String): Boolean {
+    /**
+     * Replaces one step's line, keeping its indentation.
+     *
+     * Indentation is preserved because a tape may group steps visually, and a panel edit that
+     * silently unindented one would read as the file having been reformatted.
+     */
+    fun replaceStep(text: String, sourceLine: Int, step: Step): String =
+        editLines(text, sourceLine) { lines, index ->
+            val indent = lines[index].takeWhile { it == ' ' || it == '\t' }
+            lines[index] = indent + renderStep(step)
+        }
+
+    fun removeStep(text: String, sourceLine: Int): String =
+        editLines(text, sourceLine) { lines, index -> lines.removeAt(index) }
+
+    fun duplicateStep(text: String, sourceLine: Int): String =
+        editLines(text, sourceLine) { lines, index -> lines.add(index + 1, lines[index]) }
+
+    /**
+     * Swaps a step with its neighbouring step, skipping blanks and comments.
+     *
+     * Swapping with the raw adjacent line would drag a comment away from the step it describes, or
+     * bury a step inside a comment block.
+     */
+    fun moveStep(text: String, sourceLine: Int, delta: Int): String =
+        editLines(text, sourceLine) { lines, index ->
+            var to = index + delta
+            while (to in lines.indices && !isStepLine(lines[to])) to += delta
+            if (to in lines.indices) {
+                val moved = lines.removeAt(index)
+                lines.add(to, moved)
+            }
+        }
+
+    private fun editLines(text: String, sourceLine: Int, edit: (MutableList<String>, Int) -> Unit): String {
+        val lines = text.lines().toMutableList()
+        val index = sourceLine - 1
+        if (index !in lines.indices) return text
+        edit(lines, index)
+        return lines.joinToString(NL)
+    }
+
+    private fun isStepLine(line: String): Boolean {
+        val trimmed = line.trim()
+        if (trimmed.isEmpty() || trimmed.startsWith("#")) return false
+        return !isManagedSetting(line)
+    }
+
+    private fun isManagedSetting(line: String): Boolean {
         val trimmed = line.trim()
         if (trimmed.startsWith("#")) return false
         val verb = trimmed.substringBefore(' ').lowercase()

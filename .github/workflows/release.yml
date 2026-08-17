@@ -38,6 +38,37 @@ jobs:
             echo "name=${GITHUB_REF#refs/tags/}" >> "$GITHUB_OUTPUT"
           fi
 
+      # Release notes come from CHANGELOG.md rather than from commit subjects: the changelog says
+      # what changed for someone installing the plugin, which is not the same audience as the log.
+      - name: Collect release notes
+        env:
+          TAG: ${{ steps.tag.outputs.name }}
+        run: |
+          set -euo pipefail
+          : > notes.md
+          for zip in plugins/*/build/distributions/*.zip; do
+            [ -f "$zip" ] || continue
+            module="$(basename "$(dirname "$(dirname "$(dirname "$zip")")")")"
+            file="$(basename "$zip")"
+            version="${file#"$module-"}"; version="${version%.zip}"
+            xml="plugins/$module/src/main/resources/META-INF/plugin.xml"
+            name="$(sed -n 's|.*<name>\(.*\)</name>.*|\1|p' "$xml" | head -1)"
+
+            printf '## %s %s\n\n' "$name" "$version" >> notes.md
+            # The section for this exact version, from its heading to the next one.
+            awk -v want="### $version" '
+              $0 == want { inside = 1; next }
+              inside && /^### / { exit }
+              inside && /^## / { exit }
+              inside { print }
+            ' CHANGELOG.md >> notes.md || true
+            printf '\n' >> notes.md
+          done
+          if [ ! -s notes.md ]; then
+            printf 'See CHANGELOG.md.\n' > notes.md
+          fi
+          cat notes.md
+
       - name: Publish release
         env:
           GH_TOKEN: ${{ github.token }}
@@ -47,7 +78,7 @@ jobs:
           # collision, which otherwise leaves a release published but empty.
           gh release create "$TAG" \
             --title "$TAG" \
-            --generate-notes \
+            --notes-file notes.md \
             --target "$GITHUB_SHA" \
             plugins/*/build/distributions/*.zip \
           || gh release upload "$TAG" plugins/*/build/distributions/*.zip --clobber

@@ -61,6 +61,17 @@ class DemoDriverPanel(private val project: Project) : JPanel(BorderLayout()) {
     private val reload = JButton("Reload")
     private val recorder = TapeRecorder(project)
 
+    private val stepDuration = JSpinner(SpinnerNumberModel(700, 0, 60000, 100))
+    private val stepText = JTextField(12)
+    private val stepLine = JSpinner(SpinnerNumberModel(0, 0, 100000, 1))
+    private val applyStep = JButton("Apply")
+    private val upStep = JButton("Up")
+    private val downStep = JButton("Down")
+    private val dupStep = JButton("Duplicate")
+    private val delStep = JButton("Delete")
+
+    /** The tape as last parsed, so a selected row maps back to the line that produced it. */
+    private var parsed: Tape? = null
     private var tapeFiles: List<VirtualFile> = emptyList()
     /** Guards the listeners while the UI is being populated from a file. */
     private var loading = false
@@ -93,9 +104,41 @@ class DemoDriverPanel(private val project: Project) : JPanel(BorderLayout()) {
     }
 
     private fun body(): JPanel = JPanel(BorderLayout(8, 0)).apply {
-        stepList.emptyText.text = "No steps. Add them to the tape file."
-        add(JBScrollPane(stepList).apply { preferredSize = Dimension(320, 200) }, BorderLayout.CENTER)
+        stepList.emptyText.text = "No steps. Record one, or add them to the tape file."
+        stepList.selectionMode = javax.swing.ListSelectionModel.SINGLE_SELECTION
+        val left = JPanel(BorderLayout()).apply {
+            add(JBScrollPane(stepList).apply { preferredSize = Dimension(300, 200) }, BorderLayout.CENTER)
+            add(stepEditor(), BorderLayout.SOUTH)
+        }
+        add(left, BorderLayout.CENTER)
         add(framing(), BorderLayout.EAST)
+    }
+
+    /**
+     * Edits the selected step in place.
+     *
+     * A field per thing a step can carry, rather than a raw line editor: the commonest change by
+     * far is a duration that was wrong when performed live, and a spinner makes that a nudge
+     * instead of retyping a line of syntax. Every edit still lands in the file as tape source.
+     */
+    private fun stepEditor(): JPanel {
+        val fields = JPanel(FlowLayout(FlowLayout.LEFT, 4, 2)).apply {
+            add(JBLabel("Duration ms"))
+            add(stepDuration)
+            add(JBLabel("Line"))
+            add(stepLine)
+            add(JBLabel("Text"))
+            add(stepText)
+            add(applyStep)
+        }
+        val buttons = JPanel(FlowLayout(FlowLayout.LEFT, 4, 2)).apply {
+            add(upStep); add(downStep); add(dupStep); add(delStep)
+        }
+        return JPanel(BorderLayout()).apply {
+            border = BorderFactory.createTitledBorder("Selected step")
+            add(fields, BorderLayout.NORTH)
+            add(buttons, BorderLayout.SOUTH)
+        }
     }
 
     private fun framing(): JPanel {
@@ -154,6 +197,13 @@ class DemoDriverPanel(private val project: Project) : JPanel(BorderLayout()) {
         stopButton.addActionListener { stopRecording() }
         tapes.addActionListener { if (!loading) load() }
         runButton.addActionListener { run() }
+
+        stepList.addListSelectionListener { if (!loading) showSelectedStep() }
+        applyStep.addActionListener { applySelectedStep() }
+        upStep.addActionListener { moveSelected(-1) }
+        downStep.addActionListener { moveSelected(1) }
+        dupStep.addActionListener { editTape { text, line -> TapeWriter.duplicateStep(text, line) } }
+        delStep.addActionListener { editTape { text, line -> TapeWriter.removeStep(text, line) } }
 
         cropMode.addActionListener {
             if (loading) return@addActionListener
@@ -232,11 +282,15 @@ class DemoDriverPanel(private val project: Project) : JPanel(BorderLayout()) {
             return
         }
 
+        parsed = tape
         loading = true
+        val previous = stepList.selectedIndex
         steps.clear()
         tape.steps.forEachIndexed { index, step ->
             steps.addElement("%2d  %s".format(index + 1, TapeRunner.describe(step)))
         }
+        // Keep the selection across a reload, so a run of small edits does not need re-selecting.
+        if (previous in 0 until steps.size) stepList.selectedIndex = previous
 
         val settings = tape.settings
         cropMode.selectedItem = when (val crop = settings.crop) {
@@ -267,7 +321,81 @@ class DemoDriverPanel(private val project: Project) : JPanel(BorderLayout()) {
         setStatus("${tape.steps.size} steps; $outputs")
     }
 
-    /** Writes the controls back into the tape file, as tape source. */
+    /** Mirrors the selected step into the step fields. */
+    private fun showSelectedStep() {
+        val step = selectedStep()
+        loading = true
+        stepDuration.isEnabled = step is Step.Sleep || step is Step.Glide
+        stepLine.isEnabled = step is Step.Caret
+        stepText.isEnabled = step is Step.Caret || step is Step.Popup ||
+            step is Step.Action || step is Step.Key || step is Step.Open
+        when (step) {
+            is Step.Sleep -> stepDuration.value = step.ms
+            is Step.Glide -> stepDuration.value = step.ms
+            else -> Unit
+        }
+        stepLine.value = (step as? Step.Caret)?.line ?: 0
+        stepText.text = when (step) {
+            is Step.Caret -> step.anchor
+            is Step.Popup -> step.label
+            is Step.Action -> step.id
+            is Step.Key -> step.name
+            is Step.Open -> step.path
+            else -> ""
+        }
+        loading = false
+    }
+
+    private fun selectedStep(): Step? = parsed?.steps?.getOrNull(stepList.selectedIndex)
+
+    private fun selectedSourceLine(): Int? = parsed?.stepLines?.getOrNull(stepList.selectedIndex)
+
+    /** Rebuilds the selected step from the fields and writes it back. */
+    private fun applySelectedStep() {
+        val step = selectedStep() ?: return
+        val ms = stepDuration.value as Int
+        val text = stepText.text.trim()
+        val updated: Step = when (step) {
+            is Step.Sleep -> Step.Sleep(ms)
+            is Step.Glide -> Step.Glide(ms)
+            is Step.Caret -> Step.Caret(stepLine.value as Int, text.ifBlank { step.anchor })
+            is Step.Popup -> Step.Popup(text.ifBlank { step.label })
+            is Step.Action -> Step.Action(text.ifBlank { step.id })
+            is Step.Key -> Step.Key(text.ifBlank { step.name })
+            is Step.Open -> Step.Open(text.ifBlank { step.path })
+            is Step.Click -> step
+        }
+        editTape { source, line -> TapeWriter.replaceStep(source, line, updated) }
+    }
+
+    private fun moveSelected(delta: Int) {
+        val index = stepList.selectedIndex
+        if (index < 0) return
+        editTape { text, line -> TapeWriter.moveStep(text, line, delta) }
+        if (steps.size > 0) {
+            stepList.selectedIndex = (index + delta).coerceIn(0, steps.size - 1)
+        }
+    }
+
+    /** Applies an edit to the selected step and writes the file. */
+    private fun editTape(edit: (String, Int) -> String) {
+        val file = currentFile() ?: return
+        val line = selectedSourceLine() ?: return
+        val document = com.intellij.openapi.fileEditor.FileDocumentManager.getInstance().getDocument(file)
+            ?: return
+        val updated = edit(document.text, line)
+        if (updated == document.text) return
+
+        WriteCommandAction.writeCommandAction(project)
+            .withName("Edit Demo Tape Step")
+            .run<RuntimeException> {
+                document.setText(updated)
+                PsiDocumentManager.getInstance(project).commitDocument(document)
+            }
+        load()
+    }
+
+    /** Writes the framing controls back into the tape file, as tape source. */
     private fun save() {
         val file = currentFile() ?: return
         val text = currentText() ?: return

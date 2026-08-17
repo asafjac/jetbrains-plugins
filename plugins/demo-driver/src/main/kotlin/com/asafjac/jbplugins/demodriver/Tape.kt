@@ -56,7 +56,18 @@ data class TapeSettings(
     val ffmpeg: String = "ffmpeg",
 )
 
-data class Tape(val settings: TapeSettings, val steps: List<Step>)
+/**
+ * A parsed tape.
+ *
+ * [stepLines] holds the 1-based source line each step came from, parallel to [steps]. Editing a
+ * step means rewriting exactly that line, which is what lets the panel change one duration without
+ * reformatting the file or disturbing the comments around it.
+ */
+data class Tape(
+    val settings: TapeSettings,
+    val steps: List<Step>,
+    val stepLines: List<Int> = emptyList(),
+)
 
 /**
  * Reads the tape format, which is deliberately shaped like a charmbracelet/vhs `.tape`:
@@ -81,6 +92,7 @@ object TapeParser {
     fun parse(text: String): Tape {
         var settings = TapeSettings()
         val steps = mutableListOf<Step>()
+        val stepLines = mutableListOf<Int>()
 
         text.lines().forEachIndexed { index, raw ->
             val lineNo = index + 1
@@ -93,6 +105,7 @@ object TapeParser {
             val verb = line.substringBefore(' ').lowercase()
             val rest = line.substringAfter(' ', "").trim()
 
+            val before = steps.size
             when (verb) {
                 "output" -> settings = settings.copy(outputs = settings.outputs + rest)
                 "set" -> settings = applySetting(settings, rest, lineNo)
@@ -107,8 +120,9 @@ object TapeParser {
                 "sleep" -> steps += Step.Sleep(duration(rest, lineNo))
                 else -> throw ParseError(lineNo, "unknown command '$verb'")
             }
+            if (steps.size > before) stepLines += lineNo
         }
-        return Tape(settings, steps)
+        return Tape(settings, steps, stepLines)
     }
 
     private fun stripComment(raw: String): String {

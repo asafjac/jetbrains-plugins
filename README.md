@@ -39,6 +39,8 @@ In a codebase where `<FooRegistry.qux.Baz />` is resolved by a class hierarchy, 
 </tr>
 </table>
 
+Changes per plugin are in [CHANGELOG.md](CHANGELOG.md).
+
 ## Repo
 
 ```
