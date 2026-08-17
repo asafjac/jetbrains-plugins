@@ -22,6 +22,32 @@ moves at its own pace, so its version is what to read here rather than the tag.
 
 ## Demo Driver
 
+### 0.7.0
+
+A recorded tape is now something you can replay without setting the scene by hand first, and the
+notes you are reading appear inside the IDE.
+
+- A tape states where it starts. The first steps are the file, the caret and the scroll position as
+  they were when Record was pressed, so a replay establishes the view instead of inheriting whatever
+  happens to be on screen. Without it a tape only worked from the spot the recording was made in,
+  which is the one place you are least likely to be when you replay it.
+- `Scroll` puts the line at the top of the view rather than the middle. The recorder writes down the
+  top visible line, so centering it reproduced a view scrolled half a screen from the recorded one.
+- A drag is one step again. Recording on every selection event wrote a step per event, and the
+  interleaved caret moves defeated the de-duplication that was supposed to collapse them, so a single
+  drag came out as dozens of contradictory `Caret` and `Select` steps. The gesture is now written
+  down when the button comes up, when what it turned out to be is actually known.
+- A click writes its target before the click. The order had been reversed, so `Glide` was the second
+  step of a recorded tape with nothing yet to glide to, and every take died there. A `Glide` with no
+  target is now skipped rather than fatal.
+- Change notes come from `CHANGELOG.md` and show up under What's New in the Plugins list, so an
+  update says what changed without keeping a second copy of it anywhere.
+
+### 0.6.0
+
+- Multi-line selections record and replay. A range names both of its ends so it survives edits, and
+  falls back to whole lines when an end does not sit on an identifier.
+
 ### 0.5.0
 
 An edge-case pass over recording and replay. Each of these made a tape replay differently from the

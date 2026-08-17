@@ -121,12 +121,17 @@ class Targets(private val project: Project) {
         moveTo(editor, document.getLineStartOffset(first))
     }
 
-    /** Scrolls [line] into view without disturbing the caret. */
+    /**
+     * Scrolls so [line] is the top visible line, without disturbing the caret.
+     *
+     * Top rather than centred, because that is the line the recorder writes down: centring a
+     * recorded top line reproduces a view scrolled half a screen away from the one recorded.
+     */
     fun scrollTo(line: Int) = onEdt {
         val editor = editor()
         val index = (line - 1).coerceIn(0, (editor.document.lineCount - 1).coerceAtLeast(0))
         val position = com.intellij.openapi.editor.LogicalPosition(index, 0)
-        editor.scrollingModel.scrollTo(position, ScrollType.CENTER)
+        editor.scrollingModel.scrollVertically(editor.logicalPositionToXY(position).y)
         Unit
     }
 

@@ -79,8 +79,82 @@ tasks.withType<JavaCompile>().configureEach {
     options.release.set(bytecodeTarget.toInt())
 }
 
+/**
+ * The plugin's display name, read from its own plugin.xml.
+ *
+ * Needed to find this plugin's section of the shared CHANGELOG, which is organized by display name
+ * rather than by module directory because that is what a reader of the changelog recognizes.
+ */
+val pluginDisplayName: String? =
+    file("src/main/resources/META-INF/plugin.xml").takeIf { it.exists() }?.readText()
+        ?.let { Regex("<name>(.*?)</name>").find(it)?.groupValues?.get(1) }
+
+/**
+ * This version's changelog section, as the HTML the IDE wants for What's New.
+ *
+ * The notes shown in the Plugins list are otherwise empty, so an update tells the user nothing about
+ * what changed. Taking them from CHANGELOG.md means there is one place to write them, and the
+ * release notes on GitHub and the notes inside the IDE cannot disagree.
+ */
+fun changeNotesFor(version: String): String? {
+    val changelog = rootProject.file("CHANGELOG.md").takeIf { it.exists() } ?: return null
+    val name = pluginDisplayName ?: return null
+
+    val lines = changelog.readLines()
+    val start = lines.indexOfFirst { it.trim() == "## $name" }
+    if (start < 0) return null
+    // Bounded by the next plugin's heading, so one plugin's notes never bleed into another's.
+    val end = lines.drop(start + 1).indexOfFirst { it.startsWith("## ") }
+        .let { if (it < 0) lines.size else start + 1 + it }
+
+    val section = lines.subList(start + 1, end)
+    val from = section.indexOfFirst { it.trim() == "### $version" }
+    if (from < 0) return null
+    val to = section.drop(from + 1).indexOfFirst { it.startsWith("### ") }
+        .let { if (it < 0) section.size else from + 1 + it }
+
+    val body = section.subList(from + 1, to)
+
+    // Just enough Markdown for what the changelog actually uses: bullets, paragraphs and inline
+    // code. A fuller converter would be dead weight for prose this plain.
+    //
+    // Blocks are gathered whole before any HTML is written, because the changelog hard-wraps: a
+    // bullet spans several lines and only a blank line or the next bullet ends it.
+    val blocks = mutableListOf<Pair<Boolean, StringBuilder>>()
+
+    body.forEach { raw ->
+        val line = raw.trim()
+        when {
+            line.isEmpty() -> blocks += false to StringBuilder()
+            line.startsWith("- ") -> blocks += true to StringBuilder(line.removePrefix("- "))
+            // A wrapped continuation of whatever block is open, not a block of its own.
+            else -> blocks.lastOrNull()?.second?.takeIf { it.isNotEmpty() }?.append(' ')?.append(line)
+                ?: run { blocks += false to StringBuilder(line) }
+        }
+    }
+
+    fun inline(text: String) = text
+        .replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+        .replace(Regex("`([^`]+)`"), "<code>$1</code>")
+
+    val html = StringBuilder()
+    var inList = false
+    blocks.filter { it.second.isNotBlank() }.forEach { (bullet, text) ->
+        if (bullet && !inList) html.append("<ul>")
+        if (!bullet && inList) html.append("</ul>")
+        inList = bullet
+        html.append(if (bullet) "<li>" else "<p>")
+            .append(inline(text.toString()))
+            .append(if (bullet) "</li>" else "</p>")
+    }
+    if (inList) html.append("</ul>")
+    return html.toString().ifBlank { null }
+}
+
 intellijPlatform {
     pluginConfiguration {
+        // Shown as What's New in the Plugins list, and after an update.
+        changeNotes = provider { changeNotesFor(project.version.toString()) }
         ideaVersion {
             sinceBuild = providers.gradleProperty("pluginSinceBuild")
             // No upper bound: an untilBuild locks the plugin out of every IDE released after

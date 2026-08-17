@@ -144,8 +144,10 @@ object TapeRunner {
                     step.toLine, step.toAnchor, step.toNth)
                 is Step.SelectLines -> target = targets.selectLines(step.fromLine, step.toLine)
                 is Step.Scroll -> targets.scrollTo(step.line)
-                is Step.Glide -> pointer.glide(
-                    target ?: error("Glide before any Caret - nothing to glide to"), step.ms)
+                // A Glide with nothing to glide to is skipped rather than fatal. It means the tape
+                // opens with a gesture, which says nothing about where to go, and killing the take
+                // over a step that can only be a no-op wastes the whole performance.
+                is Step.Glide -> target?.let { pointer.glide(it, step.ms) }
                 is Step.Click -> {
                     target?.let { if (it != pointer.at()) pointer.jump(it) }
                     pointer.click(step.ctrl)

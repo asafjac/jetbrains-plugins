@@ -15,12 +15,14 @@ import com.intellij.openapi.editor.event.SelectionListener
 import com.intellij.openapi.editor.event.VisibleAreaEvent
 import com.intellij.openapi.editor.event.VisibleAreaListener
 import com.intellij.openapi.fileEditor.FileDocumentManager
+import com.intellij.openapi.fileEditor.FileEditorManager
 import com.intellij.openapi.fileEditor.FileEditorManagerEvent
 import com.intellij.openapi.fileEditor.FileEditorManagerListener
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.util.Disposer
 import java.awt.AWTEvent
 import java.awt.Component
+import java.awt.Point
 import java.awt.Toolkit
 import java.awt.event.AWTEventListener
 import java.awt.event.InputEvent
@@ -69,6 +71,18 @@ class TapeRecorder(private val project: Project) {
     private var gestureFrom = -1
     private var gestureAt = 0L
 
+    /**
+     * State of the gesture in progress.
+     *
+     * A press is no longer written down when it happens. A drag fires selection and caret events
+     * continuously, so recording as they arrive produced a step per event and interleaved carets
+     * defeated the de-duplication; what the tape wants is the one thing the gesture turned out to
+     * be, which is only known once the button comes back up.
+     */
+    private var mouseDown = false
+    private var pressCtrl = false
+    private var pendingSelection: String? = null
+
     val isRecording: Boolean get() = disposable != null
 
     val stepCount: Int get() = lines.count { it.isNotBlank() && !it.startsWith("#") }
@@ -78,6 +92,8 @@ class TapeRecorder(private val project: Project) {
         lines.clear()
         lastFile = null
         gestureFrom = -1
+        mouseDown = false
+        pendingSelection = null
         lastEventAt = System.currentTimeMillis()
 
         val parent = Disposer.newDisposable("demo-driver-recorder")
@@ -101,6 +117,7 @@ class TapeRecorder(private val project: Project) {
                 }
             })
 
+        recordStartState()
         installInputWatcher()
 
         // Application-level, since actions are not project-scoped. Recording the id rather than the
@@ -119,6 +136,39 @@ class TapeRecorder(private val project: Project) {
             })
     }
 
+    /**
+     * Writes down where the IDE was when recording began.
+     *
+     * Without this a tape starts at whatever the first event happened to be, which silently assumes
+     * the replay begins with the same file open, scrolled to the same place. It does not: a tape
+     * has to state its own starting point or it only works from wherever the recording was made.
+     */
+    private fun recordStartState() {
+        val editor = FileEditorManager.getInstance(project).selectedTextEditor ?: return
+        val document = editor.document
+
+        FileDocumentManager.getInstance().getFile(document)?.let { ensureFile(relative(it.path)) }
+
+        // Caret before scroll, and the order matters: placing the caret scrolls it into view, so
+        // doing that second would undo the scroll. Scrolling second settles the view for good,
+        // which is why the caret is stated first even though the eye reads the view first.
+        val offset = editor.caretModel.offset
+        val anchor = wordAt(document.charsSequence, offset)
+        if (anchor != null) {
+            val line = document.getLineNumber(offset) + 1
+            val nth = occurrenceOf(document.charsSequence, document, line, anchor, offset)
+            add("Caret $line \"$anchor\"" + if (nth > 1) " nth $nth" else "")
+        }
+
+        val topOffsetY = editor.scrollingModel.visibleArea.y
+        val topLine = editor.xyToLogicalPosition(Point(0, topOffsetY)).line + 1
+        if (topLine > 1) add("Scroll $topLine")
+
+        // The clock starts after the preamble, so the first real pause is measured from when the
+        // user actually began rather than from the moment they pressed Record.
+        lastEventAt = System.currentTimeMillis()
+    }
+
     /** Stops recording and returns the tape text. */
     fun stop(settings: TapeSettings = TapeSettings()): String {
         awtListener?.let { Toolkit.getDefaultToolkit().removeAWTEventListener(it) }
@@ -130,6 +180,8 @@ class TapeRecorder(private val project: Project) {
             "# Recorded by Demo Driver. Tidy the Sleep durations, then replay.",
             "#",
             "# Targets are text, not pixels, so this keeps working after the file is edited.",
+            "# The first steps state where the IDE was when recording began, so a replay does not",
+            "# depend on already being in the right place.",
             "",
         )
         val body = if (lines.isEmpty()) listOf("# Nothing was recorded.") else lines
@@ -151,6 +203,7 @@ class TapeRecorder(private val project: Project) {
             runCatching {
                 when {
                     event is MouseEvent && event.id == MouseEvent.MOUSE_PRESSED -> onMousePressed(event)
+                    event is MouseEvent && event.id == MouseEvent.MOUSE_RELEASED -> onMouseReleased(event)
                     event is KeyEvent && event.id == KeyEvent.KEY_PRESSED -> onKeyPressed(event)
                 }
             }
@@ -171,13 +224,55 @@ class TapeRecorder(private val project: Project) {
         }
 
         if (!inEditor(event.component)) return
-        // Modifiers are read here, at press time, the only moment they are reliable.
-        val ctrl = event.isControlDown || event.isMetaDown
+        // Modifiers are read here, at press time, the only moment they are reliable, and kept for
+        // the release to use.
+        pressCtrl = event.isControlDown || event.isMetaDown
+        mouseDown = true
+        pendingSelection = null
+    }
+
+    /**
+     * Writes down what the gesture turned out to be.
+     *
+     * A drag becomes one Select; a press with no selection becomes a target and a click. Deciding
+     * here rather than on press is what keeps a drag from producing dozens of steps, and it also
+     * guarantees the target is written before the click that needs it - a Glide emitted first has
+     * nothing to glide to and fails the replay on its second step.
+     */
+    private fun onMouseReleased(event: MouseEvent) {
+        if (event.button != MouseEvent.BUTTON1 || !mouseDown) return
+        mouseDown = false
+
+        val selection = pendingSelection
+        pendingSelection = null
+        if (selection != null) {
+            gap()
+            gestureFrom = -1
+            add(selection)
+            return
+        }
+
+        // A plain click: the caret has settled by now, so the target can be read rather than
+        // guessed at from the pointer.
+        val target = caretStepNow() ?: return
         gap()
         gestureFrom = lines.size
         gestureAt = System.currentTimeMillis()
-        lines += "Glide 700ms"
-        lines += if (ctrl) "CtrlClick" else "Click"
+        add(target)
+        add("Glide 700ms")
+        add(if (pressCtrl) "CtrlClick" else "Click")
+    }
+
+    /** The Caret step for wherever the caret is now, naming its file first. */
+    private fun caretStepNow(): String? {
+        val editor = FileEditorManager.getInstance(project).selectedTextEditor ?: return null
+        val document = editor.document
+        val offset = editor.caretModel.offset
+        val anchor = wordAt(document.charsSequence, offset) ?: return null
+        val line = document.getLineNumber(offset) + 1
+        FileDocumentManager.getInstance().getFile(document)?.let { ensureFile(relative(it.path)) }
+        val nth = occurrenceOf(document.charsSequence, document, line, anchor, offset)
+        return "Caret $line \"$anchor\"" + if (nth > 1) " nth $nth" else ""
     }
 
     private fun onKeyPressed(event: KeyEvent) {
@@ -202,7 +297,7 @@ class TapeRecorder(private val project: Project) {
         gap()
         gestureFrom = lines.size
         gestureAt = System.currentTimeMillis()
-        lines += "Key $name"
+        add("Key $name")
     }
 
     /**
@@ -224,7 +319,7 @@ class TapeRecorder(private val project: Project) {
             gap()
         }
         gestureFrom = -1
-        lines += "Action $id"
+        add("Action $id")
         // An action that navigates produces its own Open and Caret events.
         suppress()
     }
@@ -249,7 +344,7 @@ class TapeRecorder(private val project: Project) {
         val short = label.substringBefore(" (").trim().ifBlank { label }
         gap()
         gestureFrom = -1
-        lines += "Popup \"$short\""
+        add("Popup \"$short\"")
         suppress()
     }
 
@@ -261,7 +356,10 @@ class TapeRecorder(private val project: Project) {
             }
 
     private fun recordCaret(event: CaretEvent) {
-        if (suppressed()) return
+        // A caret moving under the mouse is part of whatever the mouse is doing, and the release
+        // writes that down as one step. Recording it here is what interleaved carets between the
+        // Select steps of a single drag, which then defeated the de-duplication entirely.
+        if (mouseDown || suppressed()) return
         val editor = event.editor
         if (editor.project != null && editor.project != project) return
         val document = editor.document
@@ -278,11 +376,8 @@ class TapeRecorder(private val project: Project) {
         // Which occurrence, because a dotted path repeats words on one line and replaying the
         // first match would send the pointer to a different segment than the one clicked.
         val nth = occurrenceOf(document.charsSequence, document, line, anchor, offset)
-        val step = "Caret $line \"$anchor\"" + if (nth > 1) " nth $nth" else ""
-        // Collapse a repeat of the same target: a click often produces several caret events.
-        if (lines.lastOrNull() == step) return
         gap()
-        lines += step
+        add("Caret $line \"$anchor\"" + if (nth > 1) " nth $nth" else "")
     }
 
     /** Which occurrence of [anchor] on [line] contains [offset], 1-based. */
@@ -310,16 +405,23 @@ class TapeRecorder(private val project: Project) {
         return 1
     }
 
+    /**
+     * Remembers the selection instead of writing it.
+     *
+     * A drag fires this continuously, and every intermediate range is noise: only the range the
+     * user let go on is the one they meant. The release writes it.
+     */
     private fun recordSelection(event: SelectionEvent) {
         val editor = event.editor
         if (editor.project != null && editor.project != project) return
         val range = event.newRange ?: return
-        if (range.length == 0) return
+        if (range.length == 0) {
+            if (!mouseDown) pendingSelection = null
+            return
+        }
 
         val document = editor.document
         val text = document.charsSequence
-        FileDocumentManager.getInstance().getFile(document)?.let { ensureFile(relative(it.path)) }
-
         val startLine = document.getLineNumber(range.startOffset) + 1
         val endLine = document.getLineNumber(range.endOffset) + 1
 
@@ -329,8 +431,8 @@ class TapeRecorder(private val project: Project) {
             "Select $startLine \"$selected\""
         } else {
             // Prefer naming both ends, so the range survives edits the way every other target does.
-            // A drag that starts or ends mid-whitespace has nothing to name, and whole lines are the
-            // only honest description of it.
+            // A drag whose end does not sit on an identifier has nothing to name, and whole lines
+            // are the only honest description of it.
             val from = wordAt(text, range.startOffset)
             val to = wordAt(text, (range.endOffset - 1).coerceAtLeast(0))
             if (from != null && to != null) {
@@ -347,15 +449,14 @@ class TapeRecorder(private val project: Project) {
             }
         }
 
-        if (lines.lastOrNull() == step) return
-        // A drag fires continuously, so replace the growing selection rather than recording each
-        // intermediate state as its own step.
-        if (lines.lastOrNull()?.startsWith("Select ") == true) {
-            lines[lines.size - 1] = step
-            return
+        FileDocumentManager.getInstance().getFile(document)?.let { ensureFile(relative(it.path)) }
+        if (mouseDown) {
+            pendingSelection = step
+        } else {
+            // Selected by keyboard or by an action, so there is no release coming.
+            gap()
+            add(step)
         }
-        gap()
-        lines += step
     }
 
     /**
@@ -380,6 +481,17 @@ class TapeRecorder(private val project: Project) {
             return
         }
         gap()
+        add(step)
+    }
+
+    /**
+     * Appends a step unless it repeats the previous one.
+     *
+     * Belt and braces: several event sources can describe the same moment, and a tape that says the
+     * same thing twice replays it twice.
+     */
+    private fun add(step: String) {
+        if (lines.lastOrNull() == step) return
         lines += step
     }
 
@@ -395,7 +507,7 @@ class TapeRecorder(private val project: Project) {
         if (relative == lastFile) return
         lastFile = relative
         gap()
-        lines += "Open $relative"
+        add("Open $relative")
     }
 
     private fun suppress() {
