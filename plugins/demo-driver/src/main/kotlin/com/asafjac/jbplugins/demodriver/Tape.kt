@@ -34,13 +34,25 @@ sealed interface Step {
     data class Sleep(val ms: Int) : Step
 }
 
-/** Capture settings, all optional with usable defaults. */
+/**
+ * Capture settings, all optional with usable defaults.
+ *
+ * Every field here is written by exactly one `Set` line and nothing else, so the panel and
+ * the tape can round-trip: no setting exists that only a UI can express, which is what keeps
+ * a hand-written or generated tape a first-class input rather than a degraded one.
+ */
 data class TapeSettings(
     val outputs: List<String> = emptyList(),
     val framerate: Int = 10,
     val width: Int = 940,
-    /** `window` captures the whole IDE frame, `editor` just the editor component. */
-    val crop: String = "window",
+    val crop: Crop = Crop.Window,
+    /** Grown around the resolved crop, ignored for an absolute Region. */
+    val padding: Int = 0,
+    val cursor: Boolean = true,
+    /** Named components painted over, for hiding a tool window that shows real work. */
+    val redact: List<String> = emptyList(),
+    /** Round a Region's edges out to nearby component edges. */
+    val snap: Boolean = false,
     val ffmpeg: String = "ffmpeg",
 )
 
@@ -110,16 +122,95 @@ object TapeParser {
 
     private fun applySetting(current: TapeSettings, rest: String, lineNo: Int): TapeSettings {
         val key = rest.substringBefore(' ').lowercase()
-        val value = rest.substringAfter(' ', "").trim().trim('"')
+        // Quotes are stripped per setting, not here: a composite value such as
+        // `component "Project"` ends in a quote, so trimming globally would eat the closing
+        // one and leave an unbalanced string for parseCrop to choke on.
+        val value = rest.substringAfter(' ', "").trim()
         return when (key) {
-            "framerate" -> current.copy(framerate = value.toIntOrNull()
+            "framerate" -> current.copy(framerate = value.trim('"').toIntOrNull()
                 ?: throw ParseError(lineNo, "Framerate needs a number, got '$value'"))
-            "width" -> current.copy(width = value.toIntOrNull()
+            "width" -> current.copy(width = value.trim('"').toIntOrNull()
                 ?: throw ParseError(lineNo, "Width needs a number, got '$value'"))
-            "crop" -> current.copy(crop = value.lowercase())
-            "ffmpeg" -> current.copy(ffmpeg = value)
+            "padding" -> current.copy(padding = value.trim('"').toIntOrNull()
+                ?: throw ParseError(lineNo, "Padding needs a number, got '$value'"))
+            "cursor" -> current.copy(cursor = onOff(value.trim('"'), lineNo))
+            "snap" -> current.copy(snap = onOff(value.trim('"'), lineNo))
+            "redact" -> current.copy(redact = current.redact + parseComponentName(value, lineNo))
+            "crop" -> current.copy(crop = parseCrop(value, lineNo))
+            "ffmpeg" -> current.copy(ffmpeg = value.trim('"'))
             else -> throw ParseError(lineNo, "unknown setting '$key'")
         }
+    }
+
+    private fun onOff(value: String, lineNo: Int): Boolean = when (value.lowercase()) {
+        "on", "true", "yes" -> true
+        "off", "false", "no" -> false
+        else -> throw ParseError(lineNo, "expected on or off, got '$value'")
+    }
+
+    /** `component "Project"` -> `Project`; a bare word is accepted too. */
+    private fun parseComponentName(value: String, lineNo: Int): String {
+        val rest = value.removePrefix("component").trim()
+        if (rest.isEmpty()) throw ParseError(lineNo, "Redact needs a component name")
+        return rest.trim('"')
+    }
+
+    /**
+     * `window` | `editor` | `component "X"` | `region X,Y WxH` | `fit`
+     *   | `follow mouse|caret WxH [ease Nms]`
+     */
+    private fun parseCrop(value: String, lineNo: Int): Crop {
+        val parts = value.split(' ').filter { it.isNotBlank() }
+        if (parts.isEmpty()) throw ParseError(lineNo, "Crop needs a mode")
+        return when (parts[0].lowercase()) {
+            "window" -> Crop.Window
+            "editor" -> Crop.Editor
+            "fit" -> Crop.Fit
+            "component" -> Crop.Component(
+                value.substringAfter("component").trim().trim('"')
+                    .ifEmpty { throw ParseError(lineNo, "Crop component needs a name") })
+            "region" -> {
+                // "region 360,160 1030x600"
+                val origin = parts.getOrNull(1) ?: throw ParseError(lineNo, "region needs X,Y")
+                val size = parts.getOrNull(2) ?: throw ParseError(lineNo, "region needs WxH")
+                val (x, y) = origin.split(',').also {
+                    if (it.size != 2) throw ParseError(lineNo, "region origin must be X,Y")
+                }
+                val (w, h) = size.lowercase().split('x').also {
+                    if (it.size != 2) throw ParseError(lineNo, "region size must be WxH")
+                }
+                Crop.Region(
+                    x.trim().toIntOrNull() ?: throw ParseError(lineNo, "bad region X '$x'"),
+                    y.trim().toIntOrNull() ?: throw ParseError(lineNo, "bad region Y '$y'"),
+                    w.trim().toIntOrNull() ?: throw ParseError(lineNo, "bad region width '$w'"),
+                    h.trim().toIntOrNull() ?: throw ParseError(lineNo, "bad region height '$h'"),
+                )
+            }
+            "follow" -> {
+                val what = parts.getOrNull(1)?.lowercase()
+                    ?: throw ParseError(lineNo, "follow needs mouse or caret")
+                if (what !in setOf("mouse", "caret")) {
+                    throw ParseError(lineNo, "follow takes mouse or caret, got '$what'")
+                }
+                val size = parts.getOrNull(2) ?: throw ParseError(lineNo, "follow needs WxH")
+                val (w, h) = size.lowercase().split('x').also {
+                    if (it.size != 2) throw ParseError(lineNo, "follow size must be WxH")
+                }
+                val easeAt = parts.indexOfFirst { it.equals("ease", true) }
+                val ease = if (easeAt >= 0) durationOrNull(parts.getOrNull(easeAt + 1)) ?: 350 else 350
+                Crop.Follow(
+                    what,
+                    w.trim().toIntOrNull() ?: throw ParseError(lineNo, "bad follow width '$w'"),
+                    h.trim().toIntOrNull() ?: throw ParseError(lineNo, "bad follow height '$h'"),
+                    ease,
+                )
+            }
+            else -> throw ParseError(lineNo, "unknown crop mode '${parts[0]}'")
+        }
+    }
+
+    private fun durationOrNull(text: String?): Int? = text?.let {
+        runCatching { duration(it, 0) }.getOrNull()
     }
 
     /** `Caret 39 "Baz"` or `Caret "Baz"` for the first occurrence in the file. */

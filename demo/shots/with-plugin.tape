@@ -6,9 +6,15 @@
 
 Output docs/with-plugin.gif
 Output docs/with-plugin.mp4
+
+# fit reads the Caret targets below and frames their bounding box, so the shot contains the
+# demo and nothing else. Swap for: window | editor | component "Project"
+#   | region 360,160 1030x600 | follow caret 950x415 ease 350ms
+Set Crop fit
+Set Padding 24
+Set Cursor on
 Set Framerate 10
 Set Width 940
-Set Crop window
 
 Open demo/src/App.tsx
 Sleep 1s
@@ -19,8 +25,8 @@ Glide 800ms
 CtrlClick
 Sleep 2s
 
-# Pick the override by name. Never by row number - that breaks the moment a
-# new implementation is added and the row order shifts.
+# Pick the override by name. Never by row number - that breaks the moment a new
+# implementation is added and the row order shifts.
 Popup "AcmeBaz"
 Sleep 2600ms
 

@@ -81,12 +81,20 @@ class RunTapeAction : AnAction() {
             val capture = Capture(tape.settings, File(project.basePath ?: "."))
 
             indicator.isIndeterminate = false
+            var sampler: Thread? = null
+            val track = java.util.Collections.synchronizedList(mutableListOf<FollowSample>())
+
             try {
-                if (tape.settings.outputs.isNotEmpty()) {
-                    capture.start(targets.captureRegion(tape.settings.crop))
-                    // Give the recorder a moment to attach before anything moves, or the
-                    // first second of every take is a blank frame.
+                val recording = tape.settings.outputs.isNotEmpty()
+                if (recording) {
+                    indicator.text = "Resolving frame"
+                    val region = targets.resolveCrop(tape.settings, tape.steps)
+                    capture.redactions = tape.settings.redact.map { targets.componentBounds(it) }
+                    capture.start(region)
+                    // Give the recorder a moment to attach before anything moves, or the first
+                    // second of every take is a blank frame.
                     Thread.sleep(1200)
+                    sampler = startSampler(tape.settings.crop, targets, pointer, track)
                 }
 
                 tape.steps.forEachIndexed { index, step ->
@@ -96,7 +104,9 @@ class RunTapeAction : AnAction() {
                     execute(step, targets, pointer)
                 }
 
-                val written = capture.finish()
+                sampler?.interrupt()
+                indicator.text = "Rendering"
+                val written = capture.finish(track.toList())
                 notify(project, NotificationType.INFORMATION, buildString {
                     append("$tapeName finished (${tape.steps.size} steps)")
                     if (written.isNotEmpty()) {
@@ -105,11 +115,39 @@ class RunTapeAction : AnAction() {
                     }
                 })
             } catch (e: Exception) {
+                sampler?.interrupt()
                 capture.abort()
                 if (indicator.isCanceled) return
                 notify(project, NotificationType.ERROR,
                     "$tapeName failed at: ${indicator.text ?: "?"} - ${e.message}")
             }
+        }
+
+        /**
+         * Samples the viewport centre while the take runs, for a moving-viewport crop.
+         *
+         * Only a Follow crop needs this, and it is deliberately a plain thread rather than an
+         * IDE listener: the positions wanted are the ones on screen at wall-clock times that
+         * line up with recorded frames, which is not what an event callback gives.
+         */
+        private fun startSampler(
+            crop: Crop,
+            targets: Targets,
+            pointer: Pointer,
+            into: MutableList<FollowSample>,
+        ): Thread? {
+            val follow = crop as? Crop.Follow ?: return null
+            val started = System.currentTimeMillis()
+            return Thread {
+                runCatching {
+                    while (!Thread.currentThread().isInterrupted) {
+                        val at = System.currentTimeMillis() - started
+                        val point = if (follow.what == "caret") targets.caretPointNow() else pointer.at()
+                        if (point != null) into.add(FollowSample(at, point))
+                        Thread.sleep(50)
+                    }
+                }
+            }.apply { isDaemon = true; start() }
         }
 
         private var target: java.awt.Point? = null
