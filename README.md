@@ -50,4 +50,6 @@ docs/              recordings
 
 Add a plugin: create `plugins/my-plugin/build.gradle.kts` with `plugins { id("jbplugins.intellij-plugin") }` and a version, then `include("plugins:my-plugin")` in [settings.gradle.kts](settings.gradle.kts).
 
-Build with `./gradlew buildPlugin`. Try it against the fixture in a sandbox IDE with `./gradlew runIde`.
+Build with `./build.sh` (or `build.cmd` on Windows), which finds a JDK from any installed
+JetBrains IDE so nothing has to be installed first. Add a task to pass it through:
+`./build.sh runIde` opens a sandbox IDE with the fixture loaded.
