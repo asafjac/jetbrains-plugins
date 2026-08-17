@@ -1,0 +1,63 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 940 452" width="940" height="452" role="img" aria-label="Seven crop modes, each compiling to one line of tape">
+<rect width="940" height="452" rx="10" fill="#17181b" />
+<rect x="18" y="18" width="540" height="380" rx="6" fill="#2b2d30" stroke="#393b40" />
+<rect x="18" y="18" width="74" height="338" fill="#1e1f22" />
+<rect x="92" y="50" width="466" height="306" fill="#1e1f22" />
+<rect x="92" y="356" width="466" height="42" fill="#2b2d30" />
+<line x1="18" y1="356" x2="558" y2="356" stroke="#393b40" />
+<line x1="92" y1="18" x2="92" y2="356" stroke="#393b40" />
+<line x1="92" y1="50" x2="558" y2="50" stroke="#393b40" />
+<text x="28" y="372" font-family="ui-monospace, 'JetBrains Mono', 'Cascadia Code', 'DejaVu Sans Mono', Consolas, monospace" font-size="9" fill="#6f737a">PROJECT</text>
+<text x="102" y="372" font-family="ui-monospace, 'JetBrains Mono', 'Cascadia Code', 'DejaVu Sans Mono', Consolas, monospace" font-size="9" fill="#6f737a">TOOL WINDOW</text>
+<text x="30" y="40" font-family="ui-monospace, 'JetBrains Mono', 'Cascadia Code', 'DejaVu Sans Mono', Consolas, monospace" font-size="10" fill="#9da0a8">demo</text>
+<rect x="116" y="74" width="300" height="6" rx="3" fill="#303236" opacity="1" />
+<rect x="116" y="100" width="210" height="6" rx="3" fill="#303236" opacity="1" />
+<rect x="116" y="126" width="340" height="6" rx="3" fill="#303236" opacity="1" />
+<rect x="116" y="152" width="250" height="6" rx="3" fill="#548af7" opacity="0.85" />
+<rect x="116" y="178" width="180" height="6" rx="3" fill="#303236" opacity="1" />
+<rect x="116" y="204" width="270" height="6" rx="3" fill="#303236" opacity="1" />
+<rect x="116" y="230" width="150" height="6" rx="3" fill="#303236" opacity="1" />
+<g fill="#000000" opacity="0.5">
+<rect x="18" y="18" width="540" height="120" />
+<rect x="18" width="540" height="110" y="288" />
+<rect x="18" width="132" y="138" height="150" />
+<rect width="64" x="494" y="138" height="150" />
+</g>
+<rect rx="3" fill="none" stroke="#548af7" stroke-width="2" x="150" y="138" width="344" height="150" />
+<g transform="translate(150,138)"><rect x="0" y="-16" width="86" height="14" rx="3" fill="#548af7" /><text x="5" y="-5" font-family="ui-monospace, 'JetBrains Mono', 'Cascadia Code', 'DejaVu Sans Mono', Consolas, monospace" font-size="9" fill="#ffffff"><tspan x="5" opacity="0">1900x1150</tspan><tspan x="5" opacity="0">1630x900</tspan><tspan x="5" opacity="0">1630x990</tspan><tspan x="5" opacity="0">1030x600</tspan><tspan x="5" opacity="1">1180x480</tspan><tspan x="5" opacity="0">840x390</tspan><tspan x="5" opacity="0">950x415</tspan></text></g>
+<text x="588" y="40" font-family="ui-monospace, 'JetBrains Mono', 'Cascadia Code', 'DejaVu Sans Mono', Consolas, monospace" font-size="10" fill="#6f737a" letter-spacing="1.2">CROP MODE</text>
+<rect x="580" width="344" height="30" rx="4" fill="#24314c" y="162" />
+<circle cx="592" cy="54" r="5" fill="none" stroke="#6f737a" />
+<circle cx="592" cy="54" r="2.6" fill="#548af7" opacity="0" />
+<text x="606" y="58" font-family="ui-monospace, 'JetBrains Mono', 'Cascadia Code', 'DejaVu Sans Mono', Consolas, monospace" font-size="13" fill="#dfe1e5">Crop window</text>
+<circle cx="592" cy="84" r="5" fill="none" stroke="#6f737a" />
+<circle cx="592" cy="84" r="2.6" fill="#548af7" opacity="0" />
+<text x="606" y="88" font-family="ui-monospace, 'JetBrains Mono', 'Cascadia Code', 'DejaVu Sans Mono', Consolas, monospace" font-size="13" fill="#dfe1e5">Crop editor</text>
+<circle cx="592" cy="114" r="5" fill="none" stroke="#6f737a" />
+<circle cx="592" cy="114" r="2.6" fill="#548af7" opacity="0" />
+<text x="606" y="118" font-family="ui-monospace, 'JetBrains Mono', 'Cascadia Code', 'DejaVu Sans Mono', Consolas, monospace" font-size="13" fill="#dfe1e5">Crop component</text>
+<circle cx="592" cy="144" r="5" fill="none" stroke="#6f737a" />
+<circle cx="592" cy="144" r="2.6" fill="#548af7" opacity="0" />
+<text x="606" y="148" font-family="ui-monospace, 'JetBrains Mono', 'Cascadia Code', 'DejaVu Sans Mono', Consolas, monospace" font-size="13" fill="#dfe1e5">Crop region</text>
+<circle cx="592" cy="174" r="5" fill="none" stroke="#6f737a" />
+<circle cx="592" cy="174" r="2.6" fill="#548af7" opacity="1" />
+<text x="606" y="178" font-family="ui-monospace, 'JetBrains Mono', 'Cascadia Code', 'DejaVu Sans Mono', Consolas, monospace" font-size="13" fill="#dfe1e5">Crop fit</text>
+<circle cx="592" cy="204" r="5" fill="none" stroke="#6f737a" />
+<circle cx="592" cy="204" r="2.6" fill="#548af7" opacity="0" />
+<text x="606" y="208" font-family="ui-monospace, 'JetBrains Mono', 'Cascadia Code', 'DejaVu Sans Mono', Consolas, monospace" font-size="13" fill="#dfe1e5">Crop follow mouse</text>
+<circle cx="592" cy="234" r="5" fill="none" stroke="#6f737a" />
+<circle cx="592" cy="234" r="2.6" fill="#548af7" opacity="0" />
+<text x="606" y="238" font-family="ui-monospace, 'JetBrains Mono', 'Cascadia Code', 'DejaVu Sans Mono', Consolas, monospace" font-size="13" fill="#dfe1e5">Crop follow caret</text>
+<rect x="580" y="296" width="344" height="86" rx="5" fill="#1e1f22" stroke="#393b40" />
+<rect x="580" y="296" width="2" height="86" fill="#548af7" />
+<text x="594" y="316" font-family="ui-monospace, 'JetBrains Mono', 'Cascadia Code', 'DejaVu Sans Mono', Consolas, monospace" font-size="10" fill="#6f737a">compiles to</text>
+<text x="594" y="338" font-family="ui-monospace, 'JetBrains Mono', 'Cascadia Code', 'DejaVu Sans Mono', Consolas, monospace" font-size="11.5" fill="#56b6c2" opacity="0">Set Crop window</text>
+<text x="594" y="338" font-family="ui-monospace, 'JetBrains Mono', 'Cascadia Code', 'DejaVu Sans Mono', Consolas, monospace" font-size="11.5" fill="#56b6c2" opacity="0">Set Crop editor</text>
+<text x="594" y="338" font-family="ui-monospace, 'JetBrains Mono', 'Cascadia Code', 'DejaVu Sans Mono', Consolas, monospace" font-size="11.5" fill="#56b6c2" opacity="0">Set Crop component "EditorTabs"</text>
+<text x="594" y="338" font-family="ui-monospace, 'JetBrains Mono', 'Cascadia Code', 'DejaVu Sans Mono', Consolas, monospace" font-size="11.5" fill="#56b6c2" opacity="0">Set Crop region 360,160 1030x600</text>
+<text x="594" y="338" font-family="ui-monospace, 'JetBrains Mono', 'Cascadia Code', 'DejaVu Sans Mono', Consolas, monospace" font-size="11.5" fill="#56b6c2" opacity="1">Set Crop fit</text>
+<text x="594" y="338" font-family="ui-monospace, 'JetBrains Mono', 'Cascadia Code', 'DejaVu Sans Mono', Consolas, monospace" font-size="11.5" fill="#56b6c2" opacity="0">Set Crop follow mouse 840x390</text>
+<text x="594" y="338" font-family="ui-monospace, 'JetBrains Mono', 'Cascadia Code', 'DejaVu Sans Mono', Consolas, monospace" font-size="11.5" fill="#56b6c2" opacity="0">Set Crop follow caret 950x415</text>
+<text x="594" y="358" font-family="ui-monospace, 'JetBrains Mono', 'Cascadia Code', 'DejaVu Sans Mono', Consolas, monospace" font-size="11.5" fill="#9da0a8">Set Padding 24</text>
+<text x="594" y="374" font-family="ui-monospace, 'JetBrains Mono', 'Cascadia Code', 'DejaVu Sans Mono', Consolas, monospace" font-size="11.5" fill="#9da0a8">Output docs/demo.gif</text>
+</svg>
