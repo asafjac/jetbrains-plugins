@@ -33,6 +33,10 @@ object TapeWriter {
         is Step.Open -> "Open ${step.path}"
         is Step.Caret -> "Caret " + anchor(step.line, step.anchor, step.nth)
         is Step.Select -> "Select " + anchor(step.line, step.anchor, step.nth)
+        is Step.SelectRange -> "Select " +
+            anchor(step.fromLine, step.fromAnchor, step.fromNth) + " to " +
+            anchor(step.toLine, step.toAnchor, step.toNth)
+        is Step.SelectLines -> "Select lines ${step.fromLine} ${step.toLine}"
         is Step.Scroll -> "Scroll ${step.line}"
         is Step.Glide -> "Glide ${duration(step.ms)}"
         is Step.Click -> if (step.ctrl) "CtrlClick" else "Click"

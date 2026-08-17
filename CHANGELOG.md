@@ -27,8 +27,11 @@ take it came from.
 - Scrolling is recorded and replayed, coalesced so a wheel flick is one `Scroll` step rather than
   thirty. It had been filtered out as noise, so a demo that scrolled to reveal code replayed without
   the reveal.
-- Selections are recorded as `Select`, for single-line selections; a multi-line drag has no single
-  anchor to name, so those still record only the caret.
+- Selections are recorded as `Select`, multi-line drags included. A range names both of its ends
+  (`Select 39 "Baz" to 42 "Corge"`) so it survives edits the way every other target does, and falls
+  back to `Select lines 39 42` when an end does not sit on an identifier and there is nothing to
+  anchor to. A drag fires continuously, so the growing selection replaces itself rather than
+  recording each intermediate state.
 - Waits are adaptive. `Popup` waits for the popup to exist, `Open` waits for the editor to be laid
   out, and a new `WaitFor popup|editor` step makes it explicit. A fixed sleep has to be long enough
   for the slowest machine and still loses to an indexing pass.

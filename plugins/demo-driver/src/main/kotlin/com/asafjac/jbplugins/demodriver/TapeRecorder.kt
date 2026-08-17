@@ -317,16 +317,43 @@ class TapeRecorder(private val project: Project) {
         if (range.length == 0) return
 
         val document = editor.document
-        val selected = runCatching { document.getText(range) }.getOrNull() ?: return
-        // A multi-line drag has no single anchor to name, and reproducing it faithfully needs a
-        // range rather than a target, which the format does not carry; the caret step still lands
-        // in the right place, so the take is close rather than wrong.
-        if (selected.contains('\n') || selected.isBlank()) return
-
+        val text = document.charsSequence
         FileDocumentManager.getInstance().getFile(document)?.let { ensureFile(relative(it.path)) }
-        val line = document.getLineNumber(range.startOffset) + 1
-        val step = "Select $line \"$selected\""
+
+        val startLine = document.getLineNumber(range.startOffset) + 1
+        val endLine = document.getLineNumber(range.endOffset) + 1
+
+        val step = if (startLine == endLine) {
+            val selected = runCatching { document.getText(range) }.getOrNull()
+            if (selected.isNullOrBlank()) return
+            "Select $startLine \"$selected\""
+        } else {
+            // Prefer naming both ends, so the range survives edits the way every other target does.
+            // A drag that starts or ends mid-whitespace has nothing to name, and whole lines are the
+            // only honest description of it.
+            val from = wordAt(text, range.startOffset)
+            val to = wordAt(text, (range.endOffset - 1).coerceAtLeast(0))
+            if (from != null && to != null) {
+                val fromNth = occurrenceOf(text, document, startLine, from, range.startOffset)
+                val toNth = occurrenceOf(text, document, endLine, to, range.endOffset - 1)
+                buildString {
+                    append("Select ").append(startLine).append(" \"").append(from).append('"')
+                    if (fromNth > 1) append(" nth ").append(fromNth)
+                    append(" to ").append(endLine).append(" \"").append(to).append('"')
+                    if (toNth > 1) append(" nth ").append(toNth)
+                }
+            } else {
+                "Select lines $startLine $endLine"
+            }
+        }
+
         if (lines.lastOrNull() == step) return
+        // A drag fires continuously, so replace the growing selection rather than recording each
+        // intermediate state as its own step.
+        if (lines.lastOrNull()?.startsWith("Select ") == true) {
+            lines[lines.size - 1] = step
+            return
+        }
         gap()
         lines += step
     }

@@ -139,6 +139,10 @@ object TapeRunner {
                 }
                 is Step.Caret -> target = targets.caret(step.line, step.anchor, step.nth)
                 is Step.Select -> target = targets.select(step.line, step.anchor, step.nth)
+                is Step.SelectRange -> target = targets.selectRange(
+                    step.fromLine, step.fromAnchor, step.fromNth,
+                    step.toLine, step.toAnchor, step.toNth)
+                is Step.SelectLines -> target = targets.selectLines(step.fromLine, step.toLine)
                 is Step.Scroll -> targets.scrollTo(step.line)
                 is Step.Glide -> pointer.glide(
                     target ?: error("Glide before any Caret - nothing to glide to"), step.ms)
@@ -216,6 +220,10 @@ object TapeRunner {
         is Step.Open -> "open ${step.path}"
         is Step.Caret -> "caret " + anchorOf(step.line, step.anchor, step.nth)
         is Step.Select -> "select " + anchorOf(step.line, step.anchor, step.nth)
+        is Step.SelectRange -> "select " +
+            anchorOf(step.fromLine, step.fromAnchor, step.fromNth) + " to " +
+            anchorOf(step.toLine, step.toAnchor, step.toNth)
+        is Step.SelectLines -> "select lines ${step.fromLine}-${step.toLine}"
         is Step.Scroll -> "scroll to line ${step.line}"
         is Step.Glide -> "glide ${step.ms}ms"
         is Step.Click -> if (step.ctrl) "ctrl+click" else "click"

@@ -84,6 +84,43 @@ class Targets(private val project: Project) {
         moveTo(editor, offset + anchor.length / 2)
     }
 
+    /**
+     * Selects from one anchor to the end of another and returns the middle of the selection.
+     *
+     * Ends are ordered by offset rather than trusted in the order written, so a range recorded from
+     * a bottom-up drag still selects the same text.
+     */
+    fun selectRange(
+        fromLine: Int,
+        fromAnchor: String,
+        fromNth: Int,
+        toLine: Int,
+        toAnchor: String,
+        toNth: Int,
+    ): Point = onEdt {
+        val editor = editor()
+        val a = findAnchor(editor.document, fromLine, fromAnchor, fromNth)
+        val b = findAnchor(editor.document, toLine, toAnchor, toNth)
+        val start = minOf(a, b)
+        val end = maxOf(a + fromAnchor.length, b + toAnchor.length)
+        editor.selectionModel.setSelection(start, end)
+        // Aim at the start rather than the midpoint: for a selection spanning lines the midpoint can
+        // be off screen, and the pointer belongs where the drag began.
+        moveTo(editor, start)
+    }
+
+    /** Selects whole lines, inclusive. */
+    fun selectLines(fromLine: Int, toLine: Int): Point = onEdt {
+        val editor = editor()
+        val document = editor.document
+        val last = (document.lineCount - 1).coerceAtLeast(0)
+        val first = (minOf(fromLine, toLine) - 1).coerceIn(0, last)
+        val final = (maxOf(fromLine, toLine) - 1).coerceIn(0, last)
+        editor.selectionModel.setSelection(
+            document.getLineStartOffset(first), document.getLineEndOffset(final))
+        moveTo(editor, document.getLineStartOffset(first))
+    }
+
     /** Scrolls [line] into view without disturbing the caret. */
     fun scrollTo(line: Int) = onEdt {
         val editor = editor()

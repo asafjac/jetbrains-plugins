@@ -23,6 +23,29 @@ sealed interface Step {
     /** Select [anchor] rather than just placing the caret in it. */
     data class Select(val line: Int, val anchor: String, val nth: Int = 1) : Step
 
+    /**
+     * Select from one anchor to another, spanning lines.
+     *
+     * A multi-line drag has no single anchor to name, and a raw offset range would break on the
+     * next edit; naming both ends keeps the durability the rest of the format has.
+     */
+    data class SelectRange(
+        val fromLine: Int,
+        val fromAnchor: String,
+        val fromNth: Int,
+        val toLine: Int,
+        val toAnchor: String,
+        val toNth: Int,
+    ) : Step
+
+    /**
+     * Select whole lines.
+     *
+     * The fallback for a drag whose ends do not sit on identifiers, where there is nothing to
+     * anchor to and lines are the only honest description.
+     */
+    data class SelectLines(val fromLine: Int, val toLine: Int) : Step
+
     /** Scroll so [line] is visible, without moving the caret. */
     data class Scroll(val line: Int) : Step
 
@@ -124,7 +147,7 @@ object TapeParser {
                 "set" -> settings = applySetting(settings, rest, lineNo)
                 "open" -> steps += Step.Open(rest.trim('"'))
                 "caret" -> steps += anchored(rest, lineNo) { l, a, n -> Step.Caret(l, a, n) }
-                "select" -> steps += anchored(rest, lineNo) { l, a, n -> Step.Select(l, a, n) }
+                "select" -> steps += parseSelect(rest, lineNo)
                 "scroll" -> steps += Step.Scroll(int(rest, "Scroll", lineNo))
                 "glide" -> steps += Step.Glide(duration(rest, lineNo))
                 "click" -> steps += Step.Click(ctrl = false)
@@ -193,6 +216,30 @@ object TapeParser {
         }
         val timeout = rest.substringAfter(' ', "").trim()
         return Step.WaitFor(what, if (timeout.isEmpty()) 5000 else duration(timeout, lineNo))
+    }
+
+    /**
+     * `Select lines A B` | `Select [line] "anchor" [nth N] [to [line] "anchor" [nth N]]`
+     *
+     * One verb rather than three, because all of them are the same intent at different precisions
+     * and a reader should not have to remember which spelling goes with which.
+     */
+    private fun parseSelect(rest: String, lineNo: Int): Step {
+        if (rest.trim().lowercase().startsWith("lines")) {
+            val bounds = rest.trim().substring(5).trim().split(' ', ',').filter { it.isNotBlank() }
+            if (bounds.size != 2) throw ParseError(lineNo, "Select lines needs two line numbers")
+            return Step.SelectLines(
+                int(bounds[0], "Select lines from", lineNo), int(bounds[1], "Select lines to", lineNo))
+        }
+
+        // The separator is only a separator outside the quotes; an anchor may contain the word.
+        val closeAt = rest.indexOf('"', rest.indexOf('"') + 1)
+        val toAt = if (closeAt < 0) -1 else rest.indexOf(" to ", closeAt)
+        if (toAt < 0) return anchored(rest, lineNo) { l, a, n -> Step.Select(l, a, n) }
+
+        val from = anchored(rest.substring(0, toAt), lineNo) { l, a, n -> Triple(l, a, n) }
+        val to = anchored(rest.substring(toAt + 4), lineNo) { l, a, n -> Triple(l, a, n) }
+        return Step.SelectRange(from.first, from.second, from.third, to.first, to.second, to.third)
     }
 
     /** `<verb> [line] "anchor" [nth N]` - the shape Caret and Select share. */

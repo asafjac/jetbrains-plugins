@@ -348,12 +348,18 @@ class DemoDriverPanel(private val project: Project) : JPanel(BorderLayout()) {
         stepLine.value = when (step) {
             is Step.Caret -> step.line
             is Step.Select -> step.line
+            is Step.SelectRange -> step.fromLine
+            is Step.SelectLines -> step.fromLine
             is Step.Scroll -> step.line
             else -> 0
         }
         stepText.text = when (step) {
             is Step.Caret -> if (step.nth > 1) "${step.anchor} nth ${step.nth}" else step.anchor
-            is Step.Select -> if (step.nth > 1) "${step.anchor} nth ${step.nth}" else step.anchor
+            // Select carries its whole argument, because a range cannot be expressed by a line
+            // spinner plus one anchor and splitting it across fields would hide half of it.
+            is Step.Select -> TapeWriter.renderStep(step).removePrefix("Select ")
+            is Step.SelectRange -> TapeWriter.renderStep(step).removePrefix("Select ")
+            is Step.SelectLines -> TapeWriter.renderStep(step).removePrefix("Select ")
             is Step.Popup -> step.label
             is Step.Action -> step.id
             is Step.Key -> step.name
@@ -369,6 +375,8 @@ class DemoDriverPanel(private val project: Project) : JPanel(BorderLayout()) {
         is Step.Open -> "Open"
         is Step.Caret -> "Caret"
         is Step.Select -> "Select"
+        is Step.SelectRange -> "Select"
+        is Step.SelectLines -> "Select"
         is Step.Scroll -> "Scroll"
         is Step.Glide -> "Glide"
         is Step.Click -> if (step.ctrl) "CtrlClick" else "Click"
@@ -382,7 +390,7 @@ class DemoDriverPanel(private val project: Project) : JPanel(BorderLayout()) {
     /** Enables only the fields a command actually carries, so nothing reads as editable in vain. */
     private fun showFieldsFor(kind: String) {
         stepDuration.isEnabled = kind in setOf("Sleep", "Glide", "WaitFor")
-        stepLine.isEnabled = kind in setOf("Caret", "Select", "Scroll")
+        stepLine.isEnabled = kind in setOf("Caret", "Scroll")
         stepText.isEnabled = kind in setOf("Caret", "Select", "Popup", "Action", "Key", "Open", "WaitFor")
         stepText.toolTipText = TEXT_HINTS[kind]
     }
@@ -405,7 +413,10 @@ class DemoDriverPanel(private val project: Project) : JPanel(BorderLayout()) {
         return when (stepKind.selectedItem as String) {
             "Open" -> Step.Open(text)
             "Caret" -> Step.Caret(line, text, nth)
-            "Select" -> Step.Select(line, text, nth)
+            // Parsed rather than assembled: one reader for every Select form means the panel can
+            // never accept a spelling the tape would reject.
+            "Select" -> TapeParser.parse("Select ${raw.ifBlank { "\"\"" }}").steps.firstOrNull()
+                ?: error("cannot read that Select argument")
             "Scroll" -> Step.Scroll(line)
             "Glide" -> Step.Glide(ms)
             "Click" -> Step.Click(ctrl = false)
@@ -637,7 +648,7 @@ class DemoDriverPanel(private val project: Project) : JPanel(BorderLayout()) {
         val TEXT_HINTS = mapOf(
             "Open" to "Path, relative to the project or absolute",
             "Caret" to "Anchor text; add  nth 2  to pick a later occurrence on the line",
-            "Select" to "Anchor text to select; add  nth 2  for a later occurrence",
+            "Select" to "39 \"Baz\"  |  39 \"Baz\" to 42 \"Corge\"  |  lines 39 42",
             "Scroll" to "No text; set the line instead",
             "Popup" to "Row label, matched exactly first then loosely",
             "Action" to "IDE action id, for example GotoDeclaration or Back",
