@@ -10,13 +10,13 @@
 -->
 <plugins>
   <plugin id="com.asafjac.jbplugins.demo-driver"
-          url="https://github.com/asafjac/jetbrains-plugins/releases/download/v0.12.0/demo-driver-0.4.0.zip"
-          version="0.4.0">
+          url="https://github.com/asafjac/jetbrains-plugins/releases/download/v0.13.0/demo-driver-0.5.0.zip"
+          version="0.5.0">
     <name>Demo Driver</name>
     <idea-version since-build="252"/>
   </plugin>
   <plugin id="com.asafjac.jbplugins.registry-navigator"
-          url="https://github.com/asafjac/jetbrains-plugins/releases/download/v0.12.0/registry-navigator-0.8.0.zip"
+          url="https://github.com/asafjac/jetbrains-plugins/releases/download/v0.13.0/registry-navigator-0.8.0.zip"
           version="0.8.0">
     <name>Registry Navigator</name>
     <idea-version since-build="252"/>
