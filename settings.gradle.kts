@@ -14,3 +14,4 @@ plugins {
 rootProject.name = "jetbrains-plugins"
 
 include("plugins:registry-navigator")
+include("plugins:demo-driver")

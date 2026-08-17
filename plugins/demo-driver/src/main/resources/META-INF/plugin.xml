@@ -1,0 +1,32 @@
+<idea-plugin>
+    <id>com.asafjac.jbplugins.demo-driver</id>
+    <name>Demo Driver</name>
+    <vendor email="asafjac@users.noreply.github.com" url="https://github.com/asafjac/jetbrains-plugins">asafjac</vendor>
+
+    <description><![CDATA[
+        Records screen demos of the IDE from a script, so a demo can be re-recorded after every
+        change instead of performed by hand.
+        <p>
+        A tape describes the walkthrough in terms of code - "the text Baz on line 39" - and the
+        plugin asks the editor where that actually is on screen. The real pointer then travels
+        there, so takes look human while the targets stay exact across font, theme, zoom and
+        window changes.
+        </p>
+        <p>Needs ffmpeg on PATH for capture. Dev tooling; nothing runs unless you invoke it.</p>
+    ]]></description>
+
+    <depends>com.intellij.modules.platform</depends>
+
+    <extensions defaultExtensionNs="com.intellij">
+        <notificationGroup id="Demo Driver" displayType="BALLOON"/>
+    </extensions>
+
+    <actions>
+        <action id="DemoDriver.RunTape"
+                class="com.asafjac.jbplugins.demodriver.RunTapeAction"
+                text="Run Demo Tape"
+                description="Replay the .tape file in the current editor and capture it">
+            <add-to-group group-id="ToolsMenu" anchor="last"/>
+        </action>
+    </actions>
+</idea-plugin>
